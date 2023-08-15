@@ -1,4 +1,5 @@
 use std::fs;
+use std::ops::Deref;
 use rand::Rng;
 use windows::Foundation::IReference;
 use windows::UI::Notifications::ToastNotifier;
@@ -52,8 +53,8 @@ impl Notifier {
     pub fn notify(&mut self, config: NotificationConfig) -> Result<u8,String> {
         let mut random = rand::thread_rng();
         let id: u8 = random.gen();
-        let notification = Notification{ id, config, toast: None };
-        match self.display_notification(&notification) {
+        let mut notification = Notification{ id, config, toast: None };
+        match self.display_notification(&mut notification) {
             Ok(_) => {
                 self.notifications.push(notification);
                 Ok(id)
@@ -65,23 +66,35 @@ impl Notifier {
         }
     }
 
-    pub fn hide(&mut self, id: u8) {
+    pub fn hide(&mut self, id: u8) -> Result<(), String>{
         match self.notifications.iter().find(|x|x.id == id) {
-            None => {}
+            None => {
+                Err("Not found".to_string())
+            }
             Some(notification) => {
-                match &notification.toast  {
-                    None => {}
+                match notification.toast.as_ref()  {
+                    None => {
+                        Err("Toast not defined".to_string())
+                    }
                     Some(toast) => {
-                        &self.notifier.Hide(toast.as_ref());
+                        let toast = toast.deref();
+                        match self.notifier.Hide(toast) {
+                            Ok(_) => {
+                                Ok(())
+                            }
+                            Err(e) => {
+                                Err(e.message().to_string_lossy())
+                            }
+                        }
                     }
                 }
             }
         }
     }
 
-    fn display_notification(&mut self, n: &Notification) -> windows::core::Result<()> {
+    fn display_notification(&mut self, notification: &mut Notification) -> windows::core::Result<()> {
         let toast_doc = XmlDocument::new()?;
-        let raw_content = match &n.config.content {
+        let raw_content = match &notification.config.content {
             ToastContent::Raw(raw) => String::from(raw),
             ToastContent::Path(path) => fs::read_to_string(path)
                 .expect("Should have been able to read the file"),
@@ -138,6 +151,7 @@ impl Notifier {
                 Ok(())
             },
         ))?;
+        notification.toast = Some(Box::new(toast));
         Ok(())
     }
 }
