@@ -1,0 +1,35 @@
+AUM_ID=""
+
+[package]
+name = "test_toast"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+scopeguard = "1.1.0"
+thiserror = "1.0.44"
+url = "2.2.2"
+hyper = { version = "0.14", features = ["full"] }
+tokio = { version = "1", features = ["full"] }
+rand = "0.8.5"
+serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+
+[dependencies.windows]
+version = "0.48.0"
+features = [
+    "Data_Xml_Dom",
+    "Foundation",
+    "Foundation_Collections",
+    "Globalization",
+    "UI_Notifications",
+    "Win32_System_Registry",
+    "Win32_Storage_FileSystem",
+    "Win32_Security",
+    "Win32_Foundation",
+]
+
+[package.metadata.docs.rs]
+default-target = "x86_64-pc-windows-msvc"
