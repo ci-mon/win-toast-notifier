@@ -1,0 +1,15 @@
+<toast>
+    <visual>
+        <binding template='ToastGeneric'>
+            <text >AAA</text>
+            <text >BBB</text>
+        </binding>
+    </visual>
+    <audio src='ms-appx:///Audio/NotificationSound.mp3'/>
+    <actions>
+        <action content='Open' arguments='action=open'/>
+        <action content='WIP' arguments='action=wip'/>
+        <action content='Rollback' arguments='action=rollback'/>
+        <action content='Mute' arguments='action=mute'/>
+    </actions>
+</toast>

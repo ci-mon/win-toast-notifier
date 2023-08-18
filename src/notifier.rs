@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fs;
 use std::ops::Deref;
 use rand::Rng;
@@ -33,7 +34,7 @@ pub struct Notification {
 
 pub struct Notifier {
     application_id: String,
-    notifications: Vec<Notification>,
+    notifications: HashMap<u8, Notification>,
     notifier: ToastNotifier
 }
 
@@ -42,7 +43,7 @@ impl Notifier {
         match ToastNotificationManager::CreateToastNotifierWithId(&hs(application_id)) {
             Ok(notifier) => {
                 Ok(Notifier {
-                    notifications: Vec::new(),
+                    notifications: HashMap::new(),
                     application_id: application_id.to_string(),
                     notifier
                 })
@@ -50,13 +51,17 @@ impl Notifier {
             Err(e) => Err(e.message().to_string_lossy())
         }
     }
-    pub fn notify(&mut self, config: NotificationConfig) -> Result<u8,String> {
+
+    pub(crate) fn notify(&mut self, config: NotificationConfig) -> Result<u8,String> {
         let mut random = rand::thread_rng();
-        let id: u8 = random.gen();
+        let mut id: u8 = random.gen();
+        while self.notifications.contains_key(&id) {
+            id = random.gen();
+        }
         let mut notification = Notification{ id, config, toast: None };
         match self.display_notification(&mut notification) {
             Ok(_) => {
-                self.notifications.push(notification);
+                self.notifications.insert(notification.id, notification);
                 Ok(id)
             }
             Err(error) => {
@@ -65,27 +70,39 @@ impl Notifier {
             }
         }
     }
+    pub(crate) fn hide_all(&mut self) -> Result<(), String> {
+        for notification in self.notifications.values().into_iter() {
+            self.hide(&notification)?;
+        }
+        self.notifications.clear();
+        Ok(())
+    }
 
-    pub fn hide(&mut self, id: u8) -> Result<(), String>{
-        match self.notifications.iter().find(|x|x.id == id) {
+    pub fn hide_by_id(&mut self, id: u8) -> Result<(), String>{
+        match self.notifications.remove(&id) {
             None => {
                 Err("Not found".to_string())
             }
             Some(notification) => {
-                match notification.toast.as_ref()  {
-                    None => {
-                        Err("Toast not defined".to_string())
+                self.hide(&notification)?;
+                Ok(())
+            }
+        }
+    }
+
+    fn hide(&self, notification: &Notification) -> Result<(), String> {
+        match notification.toast.as_ref() {
+            None => {
+                Err("Toast not defined".to_string())
+            }
+            Some(toast) => {
+                let toast = toast.deref();
+                match self.notifier.Hide(toast) {
+                    Ok(_) => {
+                        Ok(())
                     }
-                    Some(toast) => {
-                        let toast = toast.deref();
-                        match self.notifier.Hide(toast) {
-                            Ok(_) => {
-                                Ok(())
-                            }
-                            Err(e) => {
-                                Err(e.message().to_string_lossy())
-                            }
-                        }
+                    Err(e) => {
+                        Err(e.message().to_string_lossy())
                     }
                 }
             }
