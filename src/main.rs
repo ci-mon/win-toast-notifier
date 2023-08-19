@@ -1,12 +1,18 @@
+#![allow(unused_imports)]
+
 mod notifier;
+mod registerer;
+mod elevator;
 
 use std::collections::HashMap;
 use std::env::current_exe;
-use std::fmt::Debug;
-use std::sync::{Arc, LockResult, RwLock};
+use std::fmt::{Debug, format};
+use std::sync::{Arc, RwLock};
 use std::error::Error;
-use std::net::SocketAddr;
+use std::io::Read;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::ops::Deref;
+use std::path::PathBuf;
 use hyper::{Body, Request, Response, Server, Method, StatusCode, header};
 use hyper::body::{Buf};
 use hyper::service::{make_service_fn, service_fn};
@@ -18,11 +24,17 @@ use crate::notifier::NotificationConfig;
 use tokio::sync::{mpsc, oneshot};
 use url::form_urlencoded;
 use atoi::atoi;
-use hyper::header::HeaderValue;
+use clap::builder::Str;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::sync::Mutex;
 use lazy_static::lazy_static;
-use tokio::sync::broadcast::error::RecvError;
+use clap::{Parser, Subcommand};
+use tokio::fs;
+use url::form_urlencoded::parse;
+use winreg::enums::*;
+use winreg::RegKey;
+use registerer::{register_app_id,register_app_id_elevated,register_app_id_fallback};
+use crate::registerer::RegistrationError;
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 struct NotificationRequest {
@@ -141,18 +153,43 @@ async fn hide_all_notification(notifications_pipe: Sender<WorkerMessage>) -> Res
 }
 
 async fn get_status(req: Request<Body>, s_sender: tokio::sync::broadcast::Sender<NotificationStatus>) -> Result<Response<Body>, Box<dyn Error + Send + Sync>> {
-    let (mut tx, body) = Body::channel();
+    let (mut body_tx, body) = Body::channel();
     tokio::spawn(async move {
         let mut s_rx = s_sender.subscribe();
-        while true {
+        loop {
             match s_rx.recv().await {
-                Ok(_) => {}
+                Ok(status) => {
+                    let message: String = match status {
+                        NotificationStatus::Activated(id, info) => {
+                            json!({
+                                "id": id,
+                                "info": info
+                            }).to_string()
+                        }
+                        NotificationStatus::Dismissed(id) => {
+                            json!({
+                                "id": id
+                            }).to_string()
+                        }
+                        NotificationStatus::DismissedError(id, msg) => {
+                            json!({
+                                "id": id,
+                                "desc": msg
+                            }).to_string()
+                        }
+                        NotificationStatus::Failed(id, msg) => {
+                            json!({
+                                "id": id,
+                                "desc": msg
+                            }).to_string()
+                        }
+                    };
+                    if body_tx.send_data(hyper::body::Bytes::from(message + "\n")).await.is_err(){
+                        break;
+                    }
+                }
                 _ => break
             }
-            /*let chunk = format!("{}\n", i);
-            if tx.send_data(chunk.into()).is_err() {
-                break;
-            }*/
         }
     });
     Ok(Response::new(body))
@@ -181,11 +218,18 @@ enum WorkerMessage {
     HideAllNotifications(Sender<Result<(), String>>),
 }
 
-#[derive(Clone)]
-enum NotificationStatus {
-    Activated(u8),
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct NotificationActivationInfo {
+    arguments: String,
+    actions: HashMap<String, String>
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum NotificationStatus {
+    Activated(u8, NotificationActivationInfo),
     Dismissed(u8),
-    Failed(u8),
+    DismissedError(u8, String),
+    Failed(u8, String),
 }
 
 async fn process_notification_api_messages(mut notifier: Notifier, mut receiver: Receiver<WorkerMessage>) {
@@ -211,33 +255,106 @@ lazy_static! {
     static ref API_KEY: Arc<RwLock<Option<Box<[u8]>>>> = <_>::default();
 }
 
+#[derive(Parser, Debug, Clone)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    #[command(subcommand)]
+    command: Commands,
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum Commands {
+    /// Registers application_id in registry. Requires admin rights
+    Register {
+        /// Application Id. Example: com.app-name.module-name. See https://learn.microsoft.com/en-us/windows/win32/shell/appids
+        #[arg(short='a', long, )]
+        application_id: String,
+        /// Application display name (notification header)
+        #[arg(short='n',long)]
+        display_name: Option<String>,
+        /// Application icon URI (notification icon)
+        #[arg(short='i',long)]
+        icon_uri: Option<String>,
+        /// Disable prompt to run in elevated mode
+        #[arg(long)]
+        no_elevate: bool
+    },
+    Run {
+        /// Application Id. Can be path to executable. See https://learn.microsoft.com/en-us/windows/win32/shell/appids
+        #[arg(short='a', long, )]
+        application_id: Option<String>,
+        /// HTTP API key, should be specified in api-key header
+        #[arg(short='k', long)]
+        api_key: Option<String>,
+        /// TCP port to listen on
+        #[arg(short, long, default_value_t = 7070)]
+        port: u16,
+        /// IP Address to listen on
+        #[arg(short, long, default_value = "127.0.0.1")]
+        ip: String,
+    }
+}
 
 
 #[tokio::main]
 async fn main() {
+    let args = Args::parse();
+    match args.command {
+        Commands::Register {application_id, display_name, icon_uri,no_elevate} => {
+            match register_app_id(application_id.clone(), display_name.clone(), icon_uri.clone()) {
+                Ok(_) => {
+                    println!("Done");
+                }
+                Err(err) => {
+                    match err {
+                        RegistrationError::FileError(e) => {
+
+                            if no_elevate {
+                                panic!("Error: {}", e.to_string())
+                            } else {
+                                println!("Failed to register: {}", e.to_string());
+                                register_app_id_elevated(application_id, display_name, icon_uri)
+                            }
+                        }
+                        RegistrationError::ArgumentError(msg) => {
+                            println!("{}", msg);
+                        }
+                    }
+
+                }
+            };
+        }
+        Commands::Run {
+            application_id, api_key, port, ip
+        } => {
+            run(application_id, api_key, port, ip).await;
+        }
+    }
+}
+
+async fn run(application_id: Option<String>, api_key: Option<String>, port: u16, ip: String) {
+    let application_id = match application_id {
+        None => current_exe().unwrap().file_stem().unwrap().to_str().unwrap().to_string(),
+        Some(id) => id.to_string()
+    };
+    register_app_id_fallback(&application_id).unwrap();
     let (tx, rx) = oneshot::channel::<()>();
     SHUTDOWN_TX.lock().await.replace(tx);
-    let api_key: String = rand::thread_rng()
+    let api_key = api_key.unwrap_or(rand::thread_rng()
         .sample_iter(&Alphanumeric)
         .take(50)
         .map(char::from)
-        .collect();
+        .collect());
     match API_KEY.write() {
         Ok(mut guard) => {
             guard.replace(api_key.as_bytes().to_vec().into_boxed_slice());
         }
         Err(_) => {}
     }
-    let application_id = if cfg!(debug_assertions) {
-        "F:\\Rust\\test_toast\\target\\debug\\deps\\test_toast.exe".to_string()
-    } else {
-        current_exe().unwrap().as_path().display().to_string()
-    };
-    println!("Path={}", application_id);
-    let addr = SocketAddr::from(([127, 0, 0, 1], 7070));
-    let notifier = Notifier::new(&application_id).expect("Could not create notifier");
+    let addr = SocketAddr::from((ip.parse::<Ipv4Addr>().expect("invalid ip address"), port));
     let (w_sender, w_receiver) = mpsc::channel::<WorkerMessage>(32);
     let (s_sender, s_receiver) = tokio::sync::broadcast::channel::<NotificationStatus>(100);
+    let notifier = Notifier::new(&application_id, s_sender.clone()).expect("Could not create notifier");
     let processing_task = tokio::spawn(async move {
         process_notification_api_messages(notifier, w_receiver).await;
     });
@@ -252,11 +369,11 @@ async fn main() {
     });
     let server = Server::bind(&addr).serve(make_svc);
     let info = json!({
-        "ip": server.local_addr().ip().to_string(),
-        "port": server.local_addr().port(),
-        "application_id": application_id,
-        "api_key": api_key
-    });
+                "ip": server.local_addr().ip().to_string(),
+                "port": server.local_addr().port(),
+                "application_id": application_id,
+                "api_key": api_key
+            });
     println!("{}", info.to_string());
     let graceful = server.with_graceful_shutdown(async {
         rx.await.ok();
@@ -265,11 +382,15 @@ async fn main() {
     processing_task.await.unwrap();
 }
 
-
 #[test]
 fn test() {
-    let request = serde_json::from_str::<NotificationRequest>("{\"toast_xml\": \"1\"}").unwrap();
-    assert_eq!(request, NotificationRequest { toast_xml: Some("1".to_string()), toast_xml_path: None });
-    let content = get_notification_content(request);
-    content.expect("content empty");
+    let mut info = NotificationActivationInfo{
+        arguments: "aaa".to_string(),
+        actions: HashMap::new()
+    };
+    info.actions.insert("a".to_string(), "b".to_string());
+    let s = json!({
+        "info": info
+    }).to_string();
+    println!("{}", s);
 }

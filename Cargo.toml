@@ -1,9 +1,11 @@
-AUM_ID=""
-
 [package]
-name = "test_toast"
+name = "win-toast-notifier"
 version = "0.1.0"
 edition = "2021"
+authors = [
+    "Vadym Artemchuk"
+]
+description = "Provides HTTP API to windows toast notifications interop"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -18,9 +20,15 @@ serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 atoi = "2.0.0"
 lazy_static = "1.4.0"
+clap = { version = "4.3.21", features = ["derive"] }
+mslnk = "0.1.8"
+dirs-next = "2.0.0"
+sanitize-filename = "0.5.0"
+winreg = "0.50.0"
+winapi= {version = "0.3.9", features = ["shellapi", "winbase", "synchapi", "minwindef", "winuser"]}
 
 [dependencies.windows]
-version = "0.48.0"
+version = "0.51.1"
 features = [
     "Data_Xml_Dom",
     "Foundation",

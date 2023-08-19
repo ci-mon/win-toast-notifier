@@ -1,7 +1,10 @@
 use std::collections::HashMap;
 use std::fs;
+use std::io::Error;
 use std::ops::Deref;
+use std::sync::Arc;
 use rand::Rng;
+use tokio::sync::broadcast::Sender;
 use windows::Foundation::IReference;
 use windows::UI::Notifications::ToastNotifier;
 use windows::{
@@ -13,60 +16,73 @@ use windows::{
         ToastFailedEventArgs, ToastNotification, ToastNotificationManager,
     },
 };
+use crate::{NotificationActivationInfo, NotificationStatus};
 
 #[derive(Debug, Clone)]
 pub enum ToastContent {
     Raw(String),
-    Path(String)
+    Path(String),
 }
 
 #[derive(Debug, Clone)]
 pub struct NotificationConfig {
-    pub content: ToastContent
+    pub content: ToastContent,
 }
 
 #[derive(Debug, Clone)]
 pub struct Notification {
     id: u8,
     config: NotificationConfig,
-    toast: Option<Box<ToastNotification>>
+    toast: Option<Box<ToastNotification>>,
 }
 
 pub struct Notifier {
     application_id: String,
     notifications: HashMap<u8, Notification>,
-    notifier: ToastNotifier
+    notifier: ToastNotifier,
+    status_writer: Sender<NotificationStatus>,
 }
 
 impl Notifier {
-    pub fn new(application_id: &String) -> Result<Notifier, String> {
+    pub fn new(application_id: &String, s_sender: Sender<NotificationStatus>) -> Result<Notifier, String> {
         match ToastNotificationManager::CreateToastNotifierWithId(&hs(application_id)) {
             Ok(notifier) => {
                 Ok(Notifier {
                     notifications: HashMap::new(),
                     application_id: application_id.to_string(),
-                    notifier
+                    notifier,
+                    status_writer: s_sender,
                 })
             }
             Err(e) => Err(e.message().to_string_lossy())
         }
     }
-
-    pub(crate) fn notify(&mut self, config: NotificationConfig) -> Result<u8,String> {
+    pub(crate) fn notify(&mut self, config: NotificationConfig) -> Result<u8, String> {
         let mut random = rand::thread_rng();
         let mut id: u8 = random.gen();
         while self.notifications.contains_key(&id) {
             id = random.gen();
         }
-        let mut notification = Notification{ id, config, toast: None };
-        match self.display_notification(&mut notification) {
-            Ok(_) => {
-                self.notifications.insert(notification.id, notification);
-                Ok(id)
+        let mut notification = Notification { id, config, toast: None };
+        let raw_content = match &notification.config.content {
+            ToastContent::Raw(raw) => Ok(String::from(raw)),
+            ToastContent::Path(path) => fs::read_to_string(path).map_err(|x| format!("{}. path={}", x.to_string(), path))
+        };
+        match raw_content {
+            Ok(content) => {
+                match self.display_notification(&mut notification, content) {
+                    Ok(_) => {
+                        self.notifications.insert(notification.id, notification);
+                        Ok(id)
+                    }
+                    Err(error) => {
+                        let string = error.to_string();
+                        Err(string)
+                    }
+                }
             }
-            Err(error) => {
-                let string = error.to_string();
-                Err(string)
+            Err(msg) => {
+                Err(msg)
             }
         }
     }
@@ -78,7 +94,7 @@ impl Notifier {
         Ok(())
     }
 
-    pub fn hide_by_id(&mut self, id: u8) -> Result<(), String>{
+    pub fn hide_by_id(&mut self, id: u8) -> Result<(), String> {
         match self.notifications.remove(&id) {
             None => {
                 Err("Not found".to_string())
@@ -109,21 +125,21 @@ impl Notifier {
         }
     }
 
-    fn display_notification(&mut self, notification: &mut Notification) -> windows::core::Result<()> {
+    fn display_notification(&mut self, notification: &mut Notification, raw_content: String) -> windows::core::Result<()> {
         let toast_doc = XmlDocument::new()?;
-        let raw_content = match &notification.config.content {
-            ToastContent::Raw(raw) => String::from(raw),
-            ToastContent::Path(path) => fs::read_to_string(path)
-                .expect("Should have been able to read the file"),
-        };
         let _ = &toast_doc.LoadXml(&hs(raw_content))?;
         let toast = ToastNotification::CreateToastNotification(&toast_doc)?;
         let _ = &self.notifier.Show(&toast)?;
+        let a_status_writer = self.status_writer.clone();
+        let d_status_writer = self.status_writer.clone();
+        let f_status_writer = self.status_writer.clone();
+        let notification_id = notification.id;
         toast.Activated(&TypedEventHandler::new(
             move |_, args: &Option<IInspectable>| {
                 let args = args
                     .as_ref()
                     .and_then(|arg| arg.cast::<ToastActivatedEventArgs>().ok());
+                let mut actions = HashMap::<String, String>::new();
                 if let Some(args) = args {
                     let arguments = args.Arguments().map(|s| s.to_string_lossy()).unwrap();
                     let user_input = args.UserInput()?;
@@ -134,11 +150,15 @@ impl Notifier {
                             .cast::<IReference<HSTRING>>()?
                             .GetString()?
                             .to_string_lossy();
-                        println!("key={}, val={}", key, val_str);
+                        actions.insert(key, val_str);
                     }
-                    println!("Args={}", arguments);
+                    let info = NotificationActivationInfo {
+                        arguments: arguments,
+                        actions: actions,
+                    };
+                    let status = NotificationStatus::Activated(notification_id, info);
+                    a_status_writer.send(status).ok();
                 }
-
                 Ok(())
             },
         ))?;
@@ -147,11 +167,11 @@ impl Notifier {
                 if let Some(args) = args {
                     match args.Reason() {
                         Ok(r) => {
-                            println!("Dismissed {:?}", r)
-                        },
-                        Err(e) =>{
-                            println!("Dismissed error {:?}", e.message())
-                        },
+                            d_status_writer.send(NotificationStatus::Dismissed(notification_id)).ok();
+                        }
+                        Err(e) => {
+                            d_status_writer.send(NotificationStatus::DismissedError(notification_id, e.message().to_string())).ok();
+                        }
                     };
                 }
                 Ok(())
@@ -162,7 +182,7 @@ impl Notifier {
                 if let Some(args) = args {
                     let e = args.ErrorCode().and_then(|e| e.ok());
                     if let Err(e) = e {
-                        println!("Failed: {}", e.message())
+                        f_status_writer.send(NotificationStatus::Failed(notification_id, e.message().to_string())).ok();
                     }
                 }
                 Ok(())

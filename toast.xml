@@ -5,8 +5,12 @@
             <text >BBB</text>
         </binding>
     </visual>
-    <audio src='ms-appx:///Audio/NotificationSound.mp3'/>
     <actions>
+        <input id="status" type="selection" defaultInput="yes">
+            <selection id="yes" content="Going"/>
+            <selection id="maybe" content="Maybe"/>
+            <selection id="no" content="Decline"/>
+        </input>
         <action content='Open' arguments='action=open'/>
         <action content='WIP' arguments='action=wip'/>
         <action content='Rollback' arguments='action=rollback'/>
