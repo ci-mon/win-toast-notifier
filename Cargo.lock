@@ -508,6 +508,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "named_pipe"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ad9c443cce91fc3e12f017290db75dde490d685cdaaf508d7159d7cf41f0eb2b"
+dependencies = [
+ "winapi",
+]
+
+[[package]]
 name = "num-traits"
 version = "0.2.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -992,6 +1001,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9c8d87e72b64a3b4db28d11ce29237c246188f4f51057d65a7eab63b7987e423"
 
 [[package]]
+name = "widestring"
+version = "1.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "653f141f39ec16bba3c5abe400a0c60da7468261cc2cbf36805022876bc721a8"
+
+[[package]]
 name = "win-toast-notifier"
 version = "0.1.0"
 dependencies = [
@@ -1001,6 +1016,7 @@ dependencies = [
  "hyper",
  "lazy_static",
  "mslnk",
+ "named_pipe",
  "rand",
  "sanitize-filename",
  "scopeguard",
@@ -1009,6 +1025,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "url",
+ "widestring",
  "winapi",
  "windows",
  "winreg",

@@ -1,18 +1,21 @@
 #![allow(unused_imports)]
-
 mod notifier;
 mod registerer;
 mod elevator;
+mod elevator_values;
 
 use std::collections::HashMap;
+use std::env;
 use std::env::current_exe;
 use std::fmt::{Debug, format};
 use std::sync::{Arc, RwLock};
 use std::error::Error;
-use std::io::Read;
+use std::fs::File;
+use std::io::{Read, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::ops::Deref;
 use std::path::PathBuf;
+use std::time::Duration;
 use hyper::{Body, Request, Response, Server, Method, StatusCode, header};
 use hyper::body::{Buf};
 use hyper::service::{make_service_fn, service_fn};
@@ -30,11 +33,15 @@ use tokio::sync::Mutex;
 use lazy_static::lazy_static;
 use clap::{Parser, Subcommand};
 use tokio::fs;
+use tokio::time::sleep;
 use url::form_urlencoded::parse;
 use winreg::enums::*;
 use winreg::RegKey;
 use registerer::{register_app_id,register_app_id_elevated,register_app_id_fallback};
+use crate::elevator::elevate;
 use crate::registerer::RegistrationError;
+use crate::elevator::println_pipe;
+
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 struct NotificationRequest {
@@ -275,9 +282,9 @@ enum Commands {
         /// Application icon URI (notification icon)
         #[arg(short='i',long)]
         icon_uri: Option<String>,
-        /// Disable prompt to run in elevated mode
+        /// Internal flag used in administrator mode
         #[arg(long)]
-        no_elevate: bool
+        is_elevated: bool
     },
     Run {
         /// Application Id. Can be path to executable. See https://learn.microsoft.com/en-us/windows/win32/shell/appids
@@ -300,24 +307,28 @@ enum Commands {
 async fn main() {
     let args = Args::parse();
     match args.command {
-        Commands::Register {application_id, display_name, icon_uri,no_elevate} => {
+        Commands::Register {application_id, display_name, icon_uri,is_elevated} => {
+            if is_elevated {
+                elevator::enable_pipe_output();
+                println_pipe!("Started as elevated");
+            }
             match register_app_id(application_id.clone(), display_name.clone(), icon_uri.clone()) {
                 Ok(_) => {
-                    println!("Done");
+                    println_pipe!("Done");
                 }
                 Err(err) => {
                     match err {
-                        RegistrationError::FileError(e) => {
-
-                            if no_elevate {
-                                panic!("Error: {}", e.to_string())
+                        RegistrationError::FileError(e, file) => {
+                            if is_elevated {
+                                println_pipe!("{} {}", e.to_string(), file);
+                                panic!("Error: {} for {}", e.to_string(), file)
                             } else {
                                 println!("Failed to register: {}", e.to_string());
-                                register_app_id_elevated(application_id, display_name, icon_uri)
+                                register_app_id_elevated(application_id, display_name, icon_uri).await
                             }
                         }
                         RegistrationError::ArgumentError(msg) => {
-                            println!("{}", msg);
+                            println_pipe!("{}", msg);
                         }
                     }
 

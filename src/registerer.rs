@@ -3,23 +3,28 @@ use std::ffi::OsStr;
 use std::fmt::format;
 use std::os::windows::ffi::OsStrExt;
 use std::path::PathBuf;
+use clap::builder::Str;
+use windows::Win32::System::Registry::{KEY_SET_VALUE, REG_SAM_FLAGS};
 use winreg::enums::HKEY_CLASSES_ROOT;
 use winreg::RegKey;
-use crate::elevator;
+use crate::{elevator, println_pipe};
 
-pub fn register_app_id_elevated(app_id: String, display_name: Option<String>, icon_uri: Option<String>){
-    let mut args = String::from(format!("register -a \"{}\" --no-elevate", app_id));
+
+pub async fn register_app_id_elevated(app_id: String, display_name: Option<String>, icon_uri: Option<String>){
+    let mut args = String::from(format!("register -a \"{}\" --is-elevated", app_id));
     if let Some(name) = display_name{
         args.push_str(format!(" -n \"{}\"", name).as_str());
     }
     if let Some(icon) = icon_uri {
         args.push_str(format!(" -i \"{}\"", icon).as_str());
     }
-    elevator::elevate(args);
+    let exe_path = env::current_exe().expect("Failed to get current executable path")
+        .display().to_string();
+    elevator::elevate(exe_path, args).await;
 }
 
 pub enum RegistrationError {
-    FileError(std::io::Error),
+    FileError(std::io::Error, String),
     ArgumentError(String),
 }
 pub fn register_app_id(app_id: String, display_name: Option<String>, icon_uri: Option<String>) -> Result<(), RegistrationError> {
@@ -32,19 +37,34 @@ pub fn register_app_id(app_id: String, display_name: Option<String>, icon_uri: O
             key
         }
         Err(_) => {
-            let (key, _) = classes_root.create_subkey("AppUserModelId").map_err(RegistrationError::FileError)?;
+            let (key, _) = classes_root.create_subkey("AppUserModelId")
+                .map_err(|e|RegistrationError::FileError(e, "AppUserModelId".to_string()))?;
             key
         }
     };
-    if let Ok(_) = app_user_model_id.open_subkey(&app_id){
-        return Ok(());
-    }
-    let (app_id, _) = app_user_model_id.create_subkey(&app_id).map_err(RegistrationError::FileError)?;
-    if let Some(name) = display_name {
-        app_id.set_value("DisplayName", &name).map_err(RegistrationError::FileError)?;
-    }
-    if let Some(icon) = icon_uri {
-        app_id.set_value("IconUri", &icon).map_err(RegistrationError::FileError)?;
+    let app_id = match app_user_model_id.open_subkey_with_flags(&app_id, KEY_SET_VALUE.0) {
+        Ok(key) => key,
+        Err(_) => {
+            let (app_id, _) = app_user_model_id.create_subkey(&app_id)
+                .map_err(|e|RegistrationError::FileError(e, app_id.to_string()))?;
+            app_id
+        }
+    };
+    update_value(&app_id, "DisplayName", display_name)?;
+    update_value(&app_id, "IconUri", icon_uri)?;
+    Ok(())
+}
+fn update_value(key: &RegKey, name: &str, value: Option<String>) -> Result<(), RegistrationError>{
+    if let Some(val) = value {
+        if key.get_raw_value(name).is_ok() {
+            println_pipe!("Exists");
+            key.delete_value(&name)
+                .map_err(|e|RegistrationError::FileError(e, format!("remove {}", name)))?;
+            println_pipe!("removed");
+        }
+        key.set_value(&name, &val)
+            .map_err(|e|RegistrationError::FileError(e, name.to_string()))?;
+        println_pipe!("{} set to {}", name, val);
     }
     Ok(())
 }
