@@ -1,8 +1,4 @@
-extern crate winapi;
-
 use std::ptr::null_mut;
-use winapi::um::winbase::{INFINITE, WAIT_OBJECT_0};
-use winapi::shared::minwindef::{DWORD, FALSE, TRUE, HINSTANCE};
 use std::{env, fmt, str, thread};
 use std::ffi::{CString, OsStr};
 use std::fmt::{Display, format, Formatter, Pointer};
@@ -11,12 +7,10 @@ use std::process::{Command, Stdio};
 use named_pipe::PipeClient;
 use std::fs::File;
 
-use winapi::um::winnt::FILE_SHARE_READ;
-use winapi::um::winnt::FILE_SHARE_WRITE;
 use windows::Win32::System::Console::{SetStdHandle, STD_OUTPUT_HANDLE};
 use windows::Win32::Storage::FileSystem;
 use windows::Win32::UI::Shell::{ShellExecuteExW, SHELLEXECUTEINFOW, SEE_MASK_NOCLOSEPROCESS};
-use windows::Win32::System::Threading::WaitForSingleObject;
+use windows::Win32::System::Threading::{WaitForSingleObject, INFINITE};
 use std::ptr;
 use std::os::windows::io::AsRawHandle;
 use std::io::{Read, stdout, Write};
@@ -24,6 +18,7 @@ use std::sync::{Arc, LockResult, Mutex};
 use std::thread::sleep;
 use std::time::Duration;
 use lazy_static::lazy_static;
+use serde_json::to_string;
 use tokio::task::JoinHandle;
 use windows::core::{PCWSTR, w};
 macro_rules! println_pipe {
@@ -48,17 +43,17 @@ pub(crate) use println_pipe;
 
 #[test]
 fn test_redirect() {
-    enable_pipe_output();
+    enable_pipe_output("win-toast-notifier".to_string());
     println_pipe!("test");
 }
 
 #[tokio::test]
 async fn test_dump_pipe() {
-    dump_pipe().join().unwrap();
+    dump_pipe("win-toast-notifier".to_string()).join().unwrap();
 }
 
-pub fn enable_pipe_output() {
-    let pipe_name = r"\\.\pipe\win-toast-notifier";
+pub fn enable_pipe_output(pipe_name: String) {
+    let pipe_name = get_pipe_name(pipe_name);
     if let Ok(pipe) = PipeClient::connect(pipe_name) {
         match crate::elevator_values::elevator_values::OUT_PIPE.lock() {
             Ok(mut guard) => {
@@ -69,9 +64,13 @@ pub fn enable_pipe_output() {
     }
 }
 
-pub fn dump_pipe() -> thread::JoinHandle<()> {
+fn get_pipe_name(pipe_name: String) -> String {
+    format!(r"\\.\pipe\{}", pipe_name)
+}
+
+pub fn dump_pipe(pipe_name: String) -> thread::JoinHandle<()> {
     thread::spawn(|| {
-        let pipe_name = r"\\.\pipe\win-toast-notifier";
+        let pipe_name = get_pipe_name(pipe_name);
         let mut pipe = named_pipe::PipeOptions::new(pipe_name)
             .single().unwrap()
             .wait().unwrap();
@@ -110,9 +109,9 @@ impl Display for WideString {
     }
 }
 
-pub async fn elevate(exe_path: String, args: String) {
+pub async fn elevate(exe_path: String, args: String, pipe_name: String) {
     println!("Try running as elevated {} {}", exe_path, args);
-    let dump_task = dump_pipe();
+    let dump_task = dump_pipe(pipe_name);
     let exe_path = WideString::new(exe_path);
     let args = WideString::new(args);
     let mut exec_info: SHELLEXECUTEINFOW = SHELLEXECUTEINFOW {
@@ -123,10 +122,10 @@ pub async fn elevate(exe_path: String, args: String) {
         lpFile: exe_path.into_PCWSTR(),
         lpParameters: args.into_PCWSTR(),
         lpDirectory: PCWSTR::null(),
-        nShow: winapi::um::winuser::SW_HIDE,
+        nShow: windows::Win32::UI::WindowsAndMessaging::SW_HIDE.0,
         hInstApp: Default::default(),
         lpIDList: null_mut(),
-        lpClass: windows::core::PCWSTR::null(),
+        lpClass: PCWSTR::null(),
         hkeyClass: Default::default(),
         dwHotKey: 0,
         Anonymous: Default::default(),
@@ -147,7 +146,7 @@ pub async fn elevate(exe_path: String, args: String) {
 
 #[tokio::test]
 async fn elevate_test() {
-    elevate(r"F:\Rust\admin\target\debug\admin.exe".to_string(),  "aaaa aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa aaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string()).await;
+    elevate(r"F:\Rust\admin\target\debug\admin.exe".to_string(),  "aaaa aa".to_string(), "test".to_string()).await;
 }
 #[test]
 fn elevate_tes1() {

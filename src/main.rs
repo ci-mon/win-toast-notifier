@@ -1,8 +1,10 @@
 #![allow(unused_imports)]
+
 mod notifier;
 mod registerer;
 mod elevator;
 mod elevator_values;
+mod utils;
 
 use std::collections::HashMap;
 use std::env;
@@ -37,7 +39,7 @@ use tokio::time::sleep;
 use url::form_urlencoded::parse;
 use winreg::enums::*;
 use winreg::RegKey;
-use registerer::{register_app_id,register_app_id_elevated,register_app_id_fallback};
+use registerer::{register_app_id, run_elevated, register_app_id_fallback, unregister_app_id};
 use crate::elevator::elevate;
 use crate::registerer::RegistrationError;
 use crate::elevator::println_pipe;
@@ -191,7 +193,7 @@ async fn get_status(req: Request<Body>, s_sender: tokio::sync::broadcast::Sender
                             }).to_string()
                         }
                     };
-                    if body_tx.send_data(hyper::body::Bytes::from(message + "\n")).await.is_err(){
+                    if body_tx.send_data(hyper::body::Bytes::from(message + "\n")).await.is_err() {
                         break;
                     }
                 }
@@ -228,7 +230,7 @@ enum WorkerMessage {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct NotificationActivationInfo {
     arguments: String,
-    actions: HashMap<String, String>
+    actions: HashMap<String, String>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -271,27 +273,37 @@ struct Args {
 
 #[derive(Subcommand, Debug, Clone)]
 enum Commands {
-    /// Registers application_id in registry. Requires admin rights
+    /// Registers application_id in registry. Requires admin rights.
     Register {
         /// Application Id. Example: com.app-name.module-name. See https://learn.microsoft.com/en-us/windows/win32/shell/appids
-        #[arg(short='a', long, )]
+        #[arg(short = 'a', long, )]
         application_id: String,
         /// Application display name (notification header)
-        #[arg(short='n',long)]
+        #[arg(short = 'n', long)]
         display_name: Option<String>,
         /// Application icon URI (notification icon)
-        #[arg(short='i',long)]
+        #[arg(short = 'i', long)]
         icon_uri: Option<String>,
-        /// Internal flag used in administrator mode
-        #[arg(long)]
-        is_elevated: bool
+        /// Output pipe name
+        #[arg(short = 'p', long)]
+        parent_pipe: Option<String>,
     },
+    /// Removes application_id registration in registry.
+    UnRegister {
+        /// Application Id.
+        #[arg(short = 'a', long, )]
+        application_id: String,
+        /// Output pipe name
+        #[arg(short = 'p', long)]
+        parent_pipe: Option<String>,
+    },
+    /// Starts HTTP API.
     Run {
         /// Application Id. Can be path to executable. See https://learn.microsoft.com/en-us/windows/win32/shell/appids
-        #[arg(short='a', long, )]
+        #[arg(short = 'a', long, )]
         application_id: Option<String>,
         /// HTTP API key, should be specified in api-key header
-        #[arg(short='k', long)]
+        #[arg(short = 'k', long)]
         api_key: Option<String>,
         /// TCP port to listen on
         #[arg(short, long, default_value_t = 7070)]
@@ -299,7 +311,7 @@ enum Commands {
         /// IP Address to listen on
         #[arg(short, long, default_value = "127.0.0.1")]
         ip: String,
-    }
+    },
 }
 
 
@@ -307,9 +319,9 @@ enum Commands {
 async fn main() {
     let args = Args::parse();
     match args.command {
-        Commands::Register {application_id, display_name, icon_uri,is_elevated} => {
-            if is_elevated {
-                elevator::enable_pipe_output();
+        Commands::Register { application_id, display_name, icon_uri, parent_pipe } => {
+            if let Some(pipe_name) = &parent_pipe {
+                elevator::enable_pipe_output(pipe_name.to_string());
                 println_pipe!("Started as elevated");
             }
             match register_app_id(application_id.clone(), display_name.clone(), icon_uri.clone()) {
@@ -319,21 +331,33 @@ async fn main() {
                 Err(err) => {
                     match err {
                         RegistrationError::FileError(e, file) => {
-                            if is_elevated {
+                            if parent_pipe.is_some() {
                                 println_pipe!("{} {}", e.to_string(), file);
                                 panic!("Error: {} for {}", e.to_string(), file)
                             } else {
                                 println!("Failed to register: {}", e.to_string());
-                                register_app_id_elevated(application_id, display_name, icon_uri).await
+                                run_elevated("register", application_id, display_name, icon_uri).await
                             }
                         }
                         RegistrationError::ArgumentError(msg) => {
                             println_pipe!("{}", msg);
                         }
                     }
-
                 }
             };
+        }
+        Commands::UnRegister { application_id, parent_pipe } => {
+            if let Some(pipe_name) = &parent_pipe {
+                elevator::enable_pipe_output(pipe_name.to_string());
+                println_pipe!("Started as elevated");
+            }
+            if let Err(RegistrationError::FileError(e, f)) = unregister_app_id(application_id.clone()) {
+                if parent_pipe.is_some(){
+                    println!("Failed to unregister: {}", e.to_string());
+                } else {
+                    run_elevated("un-register", application_id, None, None).await
+                }
+            }
         }
         Commands::Run {
             application_id, api_key, port, ip
@@ -351,11 +375,7 @@ async fn run(application_id: Option<String>, api_key: Option<String>, port: u16,
     register_app_id_fallback(&application_id).unwrap();
     let (tx, rx) = oneshot::channel::<()>();
     SHUTDOWN_TX.lock().await.replace(tx);
-    let api_key = api_key.unwrap_or(rand::thread_rng()
-        .sample_iter(&Alphanumeric)
-        .take(50)
-        .map(char::from)
-        .collect());
+    let api_key = api_key.unwrap_or(utils::get_random_string(50));
     match API_KEY.write() {
         Ok(mut guard) => {
             guard.replace(api_key.as_bytes().to_vec().into_boxed_slice());
@@ -395,9 +415,9 @@ async fn run(application_id: Option<String>, api_key: Option<String>, port: u16,
 
 #[test]
 fn test() {
-    let mut info = NotificationActivationInfo{
+    let mut info = NotificationActivationInfo {
         arguments: "aaa".to_string(),
-        actions: HashMap::new()
+        actions: HashMap::new(),
     };
     info.actions.insert("a".to_string(), "b".to_string());
     let s = json!({

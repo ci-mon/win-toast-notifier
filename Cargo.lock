@@ -1026,7 +1026,6 @@ dependencies = [
  "tokio",
  "url",
  "widestring",
- "winapi",
  "windows",
  "winreg",
 ]
