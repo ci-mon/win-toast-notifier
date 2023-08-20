@@ -45,6 +45,97 @@ use crate::registerer::RegistrationError;
 use crate::elevator::println_pipe;
 
 
+lazy_static! {
+    static ref SHUTDOWN_TX: Arc<Mutex<Option<oneshot::Sender<()>>>> = <_>::default();
+    static ref API_KEY: Arc<RwLock<Option<Box<[u8]>>>> = <_>::default();
+}
+
+#[derive(Parser, Debug, Clone)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    #[command(subcommand)]
+    command: Commands,
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum TestType {
+    // Create message
+    Simple {
+        /// Title.
+        #[arg(short = 't', long, )]
+        title: String,
+        /// Message.
+        #[arg(short = 'm', long, )]
+        message: String,
+        /// Buttons.
+        #[arg(short = 'b', long)]
+        buttons: Option<String>,
+        /// Print xml.
+        #[arg(long)]
+        debug: bool,
+    },
+    // Raw
+    Raw {
+        #[arg(long, )]
+        xml: String
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum Commands {
+    /// Registers application_id in registry. Requires admin rights.
+    Register {
+        /// Application Id. Example: com.app-name.module-name. See https://learn.microsoft.com/en-us/windows/win32/shell/appids
+        #[arg(short = 'a', long, )]
+        application_id: String,
+        /// Application display name (notification header)
+        #[arg(short = 'n', long)]
+        display_name: Option<String>,
+        /// Application icon URI (notification icon)
+        #[arg(short = 'i', long)]
+        icon_uri: Option<String>,
+        /// Output pipe name
+        #[arg(short = 'p', long)]
+        parent_pipe: Option<String>,
+    },
+    /// Removes application_id registration in registry.
+    UnRegister {
+        /// Application Id.
+        #[arg(short = 'a', long, )]
+        application_id: String,
+        /// Output pipe name
+        #[arg(short = 'p', long)]
+        parent_pipe: Option<String>,
+    },
+    /// Creates sample notification.
+    Test {
+        /// Application Id.
+        #[arg(short = 'a', long, )]
+        application_id: String,
+        /// Wait.
+        #[arg(long)]
+        wait: bool,
+        // Type
+        #[command(subcommand)]
+        test_type: TestType,
+    },
+    /// Starts HTTP API.
+    Run {
+        /// Application Id. Can be path to executable. See https://learn.microsoft.com/en-us/windows/win32/shell/appids
+        #[arg(short = 'a', long, )]
+        application_id: Option<String>,
+        /// HTTP API key, should be specified in api-key header
+        #[arg(short = 'k', long)]
+        api_key: Option<String>,
+        /// TCP port to listen on
+        #[arg(short, long, default_value_t = 7070)]
+        port: u16,
+        /// IP Address to listen on
+        #[arg(short, long, default_value = "127.0.0.1")]
+        ip: String,
+    },
+}
+
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 struct NotificationRequest {
     #[serde(default)]
@@ -56,6 +147,170 @@ struct NotificationRequest {
 #[derive(Serialize, Deserialize)]
 struct NotificationResponse {
     notification_id: u32,
+}
+
+enum WorkerMessage {
+    CreateNotificationRequest(NotificationConfig, Sender<Result<u8, String>>),
+    HideNotificationRequest(u8, Sender<Result<(), String>>),
+    HideAllNotifications(Sender<Result<(), String>>),
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct NotificationActivationInfo {
+    arguments: String,
+    actions: HashMap<String, String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub enum DismissReason {
+    UserCanceled,
+    ApplicationHidden,
+    TimedOut,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub enum NotificationStatus {
+    Activated(u8, NotificationActivationInfo),
+    Dismissed(u8, DismissReason),
+    DismissedError(u8, String),
+    Failed(u8, String),
+}
+
+#[tokio::main]
+async fn main() {
+    let args = Args::parse();
+    match args.command {
+        Commands::Register { application_id, display_name, icon_uri, parent_pipe } => {
+            register(application_id, display_name, icon_uri, &parent_pipe).await;
+        }
+        Commands::UnRegister { application_id, parent_pipe } => {
+            un_register(application_id, &parent_pipe).await;
+        }
+        Commands::Run {
+            application_id, api_key, port, ip
+        } => {
+            run(application_id, api_key, port, ip).await;
+        }
+        Commands::Test { application_id, wait, test_type } => {
+            test(&application_id, wait, test_type).await;
+        }
+    }
+}
+
+async fn test(application_id: &String, wait: bool, test_type: TestType) {
+    let (s_sender, _s_receiver) = tokio::sync::broadcast::channel::<NotificationStatus>(100);
+    let mut notifier = Notifier::new(&application_id, s_sender.clone()).expect("Could not create notifier");
+    let content = match test_type {
+        TestType::Simple { title, message, buttons, debug } => {
+            let string = utils::create_sample_notification(title.as_str(), message.as_str(), buttons);
+            if debug {
+                println!("xml:");
+                println!("{}", string);
+            }
+            ToastContent::Raw(string)
+        }
+        TestType::Raw { xml } => ToastContent::Raw(xml)
+    };
+    register_app_id_fallback(&application_id).unwrap();
+    notifier.notify(NotificationConfig {
+        content
+    }).expect("something was wrong");
+    if wait {
+        if let Ok(res) = s_sender.subscribe().recv().await {
+            println!("{}", json!(res).to_string());
+        }
+    } else {
+        sleep(Duration::from_secs(1)).await
+    }
+}
+
+async fn un_register(application_id: String, parent_pipe: &Option<String>) {
+    if let Some(pipe_name) = &parent_pipe {
+        elevator::enable_pipe_output(pipe_name.to_string());
+        println_pipe!("Started as elevated");
+    }
+    if let Err(RegistrationError::FileError(e, _f)) = unregister_app_id(application_id.clone()) {
+        if parent_pipe.is_some() {
+            println!("Failed to unregister: {}", e.to_string());
+        } else {
+            run_elevated("un-register", application_id, None, None).await
+        }
+    }
+}
+
+async fn register(application_id: String, display_name: Option<String>, icon_uri: Option<String>, parent_pipe: &Option<String>) {
+    if let Some(pipe_name) = &parent_pipe {
+        elevator::enable_pipe_output(pipe_name.to_string());
+        println_pipe!("Started as elevated");
+    }
+    match register_app_id(application_id.clone(), display_name.clone(), icon_uri.clone()) {
+        Ok(_) => {
+            println_pipe!("Done");
+        }
+        Err(err) => {
+            match err {
+                RegistrationError::FileError(e, file) => {
+                    if parent_pipe.is_some() {
+                        println_pipe!("{} {}", e.to_string(), file);
+                        panic!("Error: {} for {}", e.to_string(), file)
+                    } else {
+                        println!("Failed to register: {}", e.to_string());
+                        run_elevated("register", application_id, display_name, icon_uri).await
+                    }
+                }
+                RegistrationError::ArgumentError(msg) => {
+                    println_pipe!("{}", msg);
+                }
+            }
+        }
+    };
+}
+
+
+async fn run(application_id: Option<String>, api_key: Option<String>, port: u16, ip: String) {
+    let application_id = match application_id {
+        None => current_exe().unwrap().file_stem().unwrap().to_str().unwrap().to_string(),
+        Some(id) => id.to_string()
+    };
+    register_app_id_fallback(&application_id).unwrap();
+    let (tx, rx) = oneshot::channel::<()>();
+    SHUTDOWN_TX.lock().await.replace(tx);
+    let api_key = api_key.unwrap_or(utils::get_random_string(50));
+    match API_KEY.write() {
+        Ok(mut guard) => {
+            guard.replace(api_key.as_bytes().to_vec().into_boxed_slice());
+        }
+        Err(_) => {}
+    }
+    let addr = SocketAddr::from((ip.parse::<Ipv4Addr>().expect("invalid ip address"), port));
+    let (w_sender, w_receiver) = mpsc::channel::<WorkerMessage>(32);
+    let (s_sender, _s_receiver) = tokio::sync::broadcast::channel::<NotificationStatus>(100);
+    let notifier = Notifier::new(&application_id, s_sender.clone()).expect("Could not create notifier");
+    let processing_task = tokio::spawn(async move {
+        process_notification_api_messages(notifier, w_receiver).await;
+    });
+    let make_svc = make_service_fn(move |_conn| {
+        let w_sender = w_sender.clone();
+        let s_sender = s_sender.clone();
+        async move {
+            Ok::<_, Box<dyn Error + Send + Sync>>(service_fn(move |req: Request<Body>| {
+                http_handler(req, w_sender.clone(), s_sender.clone())
+            }))
+        }
+    });
+    let server = Server::bind(&addr).serve(make_svc);
+    let info = json!({
+                "ip": server.local_addr().ip().to_string(),
+                "port": server.local_addr().port(),
+                "application_id": application_id,
+                "api_key": api_key
+            });
+    println!("{}", info.to_string());
+    let graceful = server.with_graceful_shutdown(async {
+        rx.await.ok();
+    });
+    graceful.await.expect("Some error on shutdown");
+    processing_task.await.unwrap();
 }
 
 async fn notify(req: Request<Body>, push_notification: Sender<WorkerMessage>) -> Result<Response<Body>, Box<dyn Error + Send + Sync>> {
@@ -99,7 +354,7 @@ fn get_notification_content(request: NotificationRequest) -> Option<ToastContent
     content
 }
 
-async fn handler(req: Request<Body>, notifications_pipe: Sender<WorkerMessage>, s_sender: tokio::sync::broadcast::Sender<NotificationStatus>) -> Result<Response<Body>, Box<dyn Error + Send + Sync>> {
+async fn http_handler(req: Request<Body>, notifications_pipe: Sender<WorkerMessage>, s_sender: tokio::sync::broadcast::Sender<NotificationStatus>) -> Result<Response<Body>, Box<dyn Error + Send + Sync>> {
     if let false = is_authorized(&req) {
         Ok(Response::builder().status(StatusCode::UNAUTHORIZED).body(Body::empty()).unwrap())
     } else {
@@ -222,32 +477,6 @@ async fn send_worker_request<TMessage, Factory>(worker_pipe: Sender<TMessage>, f
     Response::builder().status(StatusCode::INTERNAL_SERVER_ERROR).body(Body::empty()).unwrap()
 }
 
-enum WorkerMessage {
-    CreateNotificationRequest(NotificationConfig, Sender<Result<u8, String>>),
-    HideNotificationRequest(u8, Sender<Result<(), String>>),
-    HideAllNotifications(Sender<Result<(), String>>),
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize)]
-pub struct NotificationActivationInfo {
-    arguments: String,
-    actions: HashMap<String, String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize)]
-pub enum DismissReason {
-    UserCanceled,
-    ApplicationHidden,
-    TimedOut
-}
-#[derive(Clone, Debug, PartialEq, Serialize)]
-pub enum NotificationStatus {
-    Activated(u8, NotificationActivationInfo),
-    Dismissed(u8, DismissReason),
-    DismissedError(u8, String),
-    Failed(u8, String),
-}
-
 async fn process_notification_api_messages(mut notifier: Notifier, mut receiver: Receiver<WorkerMessage>) {
     while let Some(received_message) = receiver.recv().await {
         match received_message {
@@ -264,233 +493,4 @@ async fn process_notification_api_messages(mut notifier: Notifier, mut receiver:
             }
         }
     }
-}
-
-lazy_static! {
-    static ref SHUTDOWN_TX: Arc<Mutex<Option<oneshot::Sender<()>>>> = <_>::default();
-    static ref API_KEY: Arc<RwLock<Option<Box<[u8]>>>> = <_>::default();
-}
-
-#[derive(Parser, Debug, Clone)]
-#[command(author, version, about, long_about = None)]
-struct Args {
-    #[command(subcommand)]
-    command: Commands,
-}
-
-#[derive(Subcommand, Debug, Clone)]
-enum TestType {
-    // Create message
-    Simple {
-        /// Title.
-        #[arg(short = 't', long, )]
-        title: String,
-        /// Message.
-        #[arg(short = 'm', long, )]
-        message: String,
-        /// Buttons.
-        #[arg(short = 'b', long)]
-        buttons: Option<String>,
-        /// Print xml.
-        #[arg(long)]
-        debug: bool,
-    },
-    // Raw
-    Raw {
-        #[arg(long, )]
-        xml: String
-    }
-}
-#[derive(Subcommand, Debug, Clone)]
-enum Commands {
-    /// Registers application_id in registry. Requires admin rights.
-    Register {
-        /// Application Id. Example: com.app-name.module-name. See https://learn.microsoft.com/en-us/windows/win32/shell/appids
-        #[arg(short = 'a', long, )]
-        application_id: String,
-        /// Application display name (notification header)
-        #[arg(short = 'n', long)]
-        display_name: Option<String>,
-        /// Application icon URI (notification icon)
-        #[arg(short = 'i', long)]
-        icon_uri: Option<String>,
-        /// Output pipe name
-        #[arg(short = 'p', long)]
-        parent_pipe: Option<String>,
-    },
-    /// Removes application_id registration in registry.
-    UnRegister {
-        /// Application Id.
-        #[arg(short = 'a', long, )]
-        application_id: String,
-        /// Output pipe name
-        #[arg(short = 'p', long)]
-        parent_pipe: Option<String>,
-    },
-    /// Creates sample notification.
-    Test {
-        /// Application Id.
-        #[arg(short = 'a', long, )]
-        application_id: String,
-        /// Wait.
-        #[arg(long)]
-        wait: bool,
-        // Type
-        #[command(subcommand)]
-        test_type: TestType
-    },
-    /// Starts HTTP API.
-    Run {
-        /// Application Id. Can be path to executable. See https://learn.microsoft.com/en-us/windows/win32/shell/appids
-        #[arg(short = 'a', long, )]
-        application_id: Option<String>,
-        /// HTTP API key, should be specified in api-key header
-        #[arg(short = 'k', long)]
-        api_key: Option<String>,
-        /// TCP port to listen on
-        #[arg(short, long, default_value_t = 7070)]
-        port: u16,
-        /// IP Address to listen on
-        #[arg(short, long, default_value = "127.0.0.1")]
-        ip: String,
-    },
-}
-
-
-#[tokio::main]
-async fn main() {
-    let args = Args::parse();
-    match args.command {
-        Commands::Register { application_id, display_name, icon_uri, parent_pipe } => {
-            if let Some(pipe_name) = &parent_pipe {
-                elevator::enable_pipe_output(pipe_name.to_string());
-                println_pipe!("Started as elevated");
-            }
-            match register_app_id(application_id.clone(), display_name.clone(), icon_uri.clone()) {
-                Ok(_) => {
-                    println_pipe!("Done");
-                }
-                Err(err) => {
-                    match err {
-                        RegistrationError::FileError(e, file) => {
-                            if parent_pipe.is_some() {
-                                println_pipe!("{} {}", e.to_string(), file);
-                                panic!("Error: {} for {}", e.to_string(), file)
-                            } else {
-                                println!("Failed to register: {}", e.to_string());
-                                run_elevated("register", application_id, display_name, icon_uri).await
-                            }
-                        }
-                        RegistrationError::ArgumentError(msg) => {
-                            println_pipe!("{}", msg);
-                        }
-                    }
-                }
-            };
-        }
-        Commands::UnRegister { application_id, parent_pipe } => {
-            if let Some(pipe_name) = &parent_pipe {
-                elevator::enable_pipe_output(pipe_name.to_string());
-                println_pipe!("Started as elevated");
-            }
-            if let Err(RegistrationError::FileError(e, _f)) = unregister_app_id(application_id.clone()) {
-                if parent_pipe.is_some(){
-                    println!("Failed to unregister: {}", e.to_string());
-                } else {
-                    run_elevated("un-register", application_id, None, None).await
-                }
-            }
-        }
-        Commands::Run {
-            application_id, api_key, port, ip
-        } => {
-            run(application_id, api_key, port, ip).await;
-        }
-        Commands::Test {application_id, wait, test_type} => {
-            let (s_sender, _s_receiver) = tokio::sync::broadcast::channel::<NotificationStatus>(100);
-            let mut  notifier = Notifier::new(&application_id, s_sender.clone()).expect("Could not create notifier");
-            let content = match test_type {
-                TestType::Simple { title, message, buttons, debug  } => {
-                    let string = utils::create_sample_notification(title.as_str(), message.as_str(), buttons);
-                    if debug {
-                        println!("xml:");
-                        println!("{}", string);
-                    }
-                    ToastContent::Raw(string)
-                }
-                TestType::Raw {xml} => ToastContent::Raw(xml)
-            };
-            register_app_id_fallback(&application_id).unwrap();
-            notifier.notify(NotificationConfig {
-                content
-            }).expect("something was wrong");
-            if wait {
-                if let Ok(res) = s_sender.subscribe().recv().await {
-                    println!("{}", json!(res).to_string());
-                }
-            } else {
-                sleep(Duration::from_secs(1)).await
-            }
-        }
-    }
-}
-
-
-async fn run(application_id: Option<String>, api_key: Option<String>, port: u16, ip: String) {
-    let application_id = match application_id {
-        None => current_exe().unwrap().file_stem().unwrap().to_str().unwrap().to_string(),
-        Some(id) => id.to_string()
-    };
-    register_app_id_fallback(&application_id).unwrap();
-    let (tx, rx) = oneshot::channel::<()>();
-    SHUTDOWN_TX.lock().await.replace(tx);
-    let api_key = api_key.unwrap_or(utils::get_random_string(50));
-    match API_KEY.write() {
-        Ok(mut guard) => {
-            guard.replace(api_key.as_bytes().to_vec().into_boxed_slice());
-        }
-        Err(_) => {}
-    }
-    let addr = SocketAddr::from((ip.parse::<Ipv4Addr>().expect("invalid ip address"), port));
-    let (w_sender, w_receiver) = mpsc::channel::<WorkerMessage>(32);
-    let (s_sender, _s_receiver) = tokio::sync::broadcast::channel::<NotificationStatus>(100);
-    let notifier = Notifier::new(&application_id, s_sender.clone()).expect("Could not create notifier");
-    let processing_task = tokio::spawn(async move {
-        process_notification_api_messages(notifier, w_receiver).await;
-    });
-    let make_svc = make_service_fn(move |_conn| {
-        let w_sender = w_sender.clone();
-        let s_sender = s_sender.clone();
-        async move {
-            Ok::<_, Box<dyn Error + Send + Sync>>(service_fn(move |req: Request<Body>| {
-                handler(req, w_sender.clone(), s_sender.clone())
-            }))
-        }
-    });
-    let server = Server::bind(&addr).serve(make_svc);
-    let info = json!({
-                "ip": server.local_addr().ip().to_string(),
-                "port": server.local_addr().port(),
-                "application_id": application_id,
-                "api_key": api_key
-            });
-    println!("{}", info.to_string());
-    let graceful = server.with_graceful_shutdown(async {
-        rx.await.ok();
-    });
-    graceful.await.expect("Some error on shutdown");
-    processing_task.await.unwrap();
-}
-
-#[test]
-fn test() {
-    let mut info = NotificationActivationInfo {
-        arguments: "aaa".to_string(),
-        actions: HashMap::new(),
-    };
-    info.actions.insert("a".to_string(), "b".to_string());
-    let s = json!({
-        "info": info
-    }).to_string();
-    println!("{}", s);
 }

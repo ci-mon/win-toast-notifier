@@ -40,18 +40,6 @@ macro_rules! println_pipe {
 }
 pub(crate) use println_pipe;
 
-
-#[test]
-fn test_redirect() {
-    enable_pipe_output("win-toast-notifier".to_string());
-    println_pipe!("test");
-}
-
-#[tokio::test]
-async fn test_dump_pipe() {
-    dump_pipe("win-toast-notifier".to_string()).join().unwrap();
-}
-
 pub fn enable_pipe_output(pipe_name: String) {
     let pipe_name = get_pipe_name(pipe_name);
     if let Ok(pipe) = PipeClient::connect(pipe_name) {
@@ -152,10 +140,21 @@ async fn elevate_test() {
 fn elevate_tes1() {
     unsafe {
         let exe_path_original = r"F:\Rust\admin\target\debug\admin.exe".to_string();
-        let args_original = "aaaa aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa aaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string();
+        let args_original = "aaaa aaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string();
         let exe_path = WideString::new(exe_path_original.clone());
         let args = WideString::new(args_original.clone());
         assert_eq!(exe_path_original, exe_path.to_pcwstr().display().to_string());
         assert_eq!(args_original, args.to_pcwstr().display().to_string());
     }
+}
+
+#[test]
+fn test_redirect() {
+    enable_pipe_output("win-toast-notifier".to_string());
+    println_pipe!("test");
+}
+
+#[tokio::test]
+async fn test_dump_pipe() {
+    dump_pipe("win-toast-notifier".to_string()).join().unwrap();
 }
