@@ -98,7 +98,7 @@ impl WideString {
         };
         res
     }
-    pub fn into_PCWSTR(&self) -> PCWSTR {
+    pub fn to_pcwstr(&self) -> PCWSTR {
         PCWSTR::from_raw(self.bytes.as_ptr())
     }
 }
@@ -119,8 +119,8 @@ pub async fn elevate(exe_path: String, args: String, pipe_name: String) {
         fMask: SEE_MASK_NOCLOSEPROCESS,
         hwnd: windows::Win32::Foundation::HWND::default(),
         lpVerb: w!("runas"),
-        lpFile: exe_path.into_PCWSTR(),
-        lpParameters: args.into_PCWSTR(),
+        lpFile: exe_path.to_pcwstr(),
+        lpParameters: args.to_pcwstr(),
         lpDirectory: PCWSTR::null(),
         nShow: windows::Win32::UI::WindowsAndMessaging::SW_HIDE.0,
         hInstApp: Default::default(),
@@ -132,7 +132,7 @@ pub async fn elevate(exe_path: String, args: String, pipe_name: String) {
         hProcess: Default::default(),
     };
     if let Err(e) = unsafe { ShellExecuteExW(&mut exec_info) } {
-        println!("Failed to execute as admin.");
+        println!("Failed to execute as admin: {}", e.message().to_string());
         return;
     }
     let wait_result = unsafe { WaitForSingleObject(exec_info.hProcess, INFINITE) };
@@ -155,7 +155,7 @@ fn elevate_tes1() {
         let args_original = "aaaa aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa aaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string();
         let exe_path = WideString::new(exe_path_original.clone());
         let args = WideString::new(args_original.clone());
-        assert_eq!(exe_path_original, exe_path.into_PCWSTR().display().to_string());
-        assert_eq!(args_original, args.into_PCWSTR().display().to_string());
+        assert_eq!(exe_path_original, exe_path.to_pcwstr().display().to_string());
+        assert_eq!(args_original, args.to_pcwstr().display().to_string());
     }
 }

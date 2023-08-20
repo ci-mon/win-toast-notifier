@@ -161,7 +161,7 @@ async fn hide_all_notification(notifications_pipe: Sender<WorkerMessage>) -> Res
     Ok(send_worker_request(notifications_pipe, |reply| WorkerMessage::HideAllNotifications(reply)).await)
 }
 
-async fn get_status(req: Request<Body>, s_sender: tokio::sync::broadcast::Sender<NotificationStatus>) -> Result<Response<Body>, Box<dyn Error + Send + Sync>> {
+async fn get_status(_req: Request<Body>, s_sender: tokio::sync::broadcast::Sender<NotificationStatus>) -> Result<Response<Body>, Box<dyn Error + Send + Sync>> {
     let (mut body_tx, body) = Body::channel();
     tokio::spawn(async move {
         let mut s_rx = s_sender.subscribe();
@@ -175,9 +175,10 @@ async fn get_status(req: Request<Body>, s_sender: tokio::sync::broadcast::Sender
                                 "info": info
                             }).to_string()
                         }
-                        NotificationStatus::Dismissed(id) => {
+                        NotificationStatus::Dismissed(id, reason) => {
                             json!({
-                                "id": id
+                                "id": id,
+                                "reason": reason,
                             }).to_string()
                         }
                         NotificationStatus::DismissedError(id, msg) => {
@@ -234,9 +235,15 @@ pub struct NotificationActivationInfo {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
+pub enum DismissReason {
+    UserCanceled,
+    ApplicationHidden,
+    TimedOut
+}
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub enum NotificationStatus {
     Activated(u8, NotificationActivationInfo),
-    Dismissed(u8),
+    Dismissed(u8, DismissReason),
     DismissedError(u8, String),
     Failed(u8, String),
 }
@@ -386,7 +393,7 @@ async fn main() {
                 elevator::enable_pipe_output(pipe_name.to_string());
                 println_pipe!("Started as elevated");
             }
-            if let Err(RegistrationError::FileError(e, f)) = unregister_app_id(application_id.clone()) {
+            if let Err(RegistrationError::FileError(e, _f)) = unregister_app_id(application_id.clone()) {
                 if parent_pipe.is_some(){
                     println!("Failed to unregister: {}", e.to_string());
                 } else {
@@ -400,7 +407,7 @@ async fn main() {
             run(application_id, api_key, port, ip).await;
         }
         Commands::Test {application_id, wait, test_type} => {
-            let (s_sender, s_receiver) = tokio::sync::broadcast::channel::<NotificationStatus>(100);
+            let (s_sender, _s_receiver) = tokio::sync::broadcast::channel::<NotificationStatus>(100);
             let mut  notifier = Notifier::new(&application_id, s_sender.clone()).expect("Could not create notifier");
             let content = match test_type {
                 TestType::Simple { title, message, buttons, debug  } => {
@@ -446,7 +453,7 @@ async fn run(application_id: Option<String>, api_key: Option<String>, port: u16,
     }
     let addr = SocketAddr::from((ip.parse::<Ipv4Addr>().expect("invalid ip address"), port));
     let (w_sender, w_receiver) = mpsc::channel::<WorkerMessage>(32);
-    let (s_sender, s_receiver) = tokio::sync::broadcast::channel::<NotificationStatus>(100);
+    let (s_sender, _s_receiver) = tokio::sync::broadcast::channel::<NotificationStatus>(100);
     let notifier = Notifier::new(&application_id, s_sender.clone()).expect("Could not create notifier");
     let processing_task = tokio::spawn(async move {
         process_notification_api_messages(notifier, w_receiver).await;

@@ -98,7 +98,7 @@ pub fn register_app_id_fallback(app_id: &String) -> Result<(), String>{
     if !sanitize_filename::is_sanitized(&link_name){
         return Err(format!("[{}] contains invalid file name characters", &link_name))
     }
-    let mut link = mslnk::ShellLink::new(&app_id).map_err(|e|e.to_string())?;
+    let link = mslnk::ShellLink::new(&app_id).map_err(|e|e.to_string())?;
     link.create_lnk(destination).map_err(|e|e.to_string())?;
     Ok(())
 }
