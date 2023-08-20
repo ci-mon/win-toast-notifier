@@ -186,9 +186,7 @@ async fn main() {
         Commands::UnRegister { application_id, parent_pipe } => {
             un_register(application_id, &parent_pipe).await;
         }
-        Commands::Run {
-            application_id, api_key, port, ip
-        } => {
+        Commands::Run { application_id, api_key, port, ip} => {
             run(application_id, api_key, port, ip).await;
         }
         Commands::Test { application_id, wait, test_type } => {
