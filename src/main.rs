@@ -120,7 +120,7 @@ enum Commands {
         test_type: TestType,
     },
     /// Starts HTTP API.
-    Run {
+    Listen {
         /// Application Id. Can be path to executable. See https://learn.microsoft.com/en-us/windows/win32/shell/appids
         #[arg(short = 'a', long, )]
         application_id: Option<String>,
@@ -186,7 +186,7 @@ async fn main() {
         Commands::UnRegister { application_id, parent_pipe } => {
             un_register(application_id, &parent_pipe).await;
         }
-        Commands::Run { application_id, api_key, port, ip} => {
+        Commands::Listen { application_id, api_key, port, ip} => {
             run(application_id, api_key, port, ip).await;
         }
         Commands::Test { application_id, wait, test_type } => {
