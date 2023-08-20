@@ -413,7 +413,7 @@ async fn main() {
                 }
                 TestType::Raw {xml} => ToastContent::Raw(xml)
             };
-
+            register_app_id_fallback(&application_id).unwrap();
             notifier.notify(NotificationConfig {
                 content
             }).expect("something was wrong");
