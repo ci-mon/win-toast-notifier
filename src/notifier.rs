@@ -129,11 +129,14 @@ impl Notifier {
         let toast_doc = XmlDocument::new()?;
         let _ = &toast_doc.LoadXml(&hs(raw_content))?;
         let toast = ToastNotification::CreateToastNotification(&toast_doc)?;
+        toast.SetExpiresOnReboot(true)?;
         let _ = &self.notifier.Show(&toast)?;
+
         let a_status_writer = self.status_writer.clone();
         let d_status_writer = self.status_writer.clone();
         let f_status_writer = self.status_writer.clone();
         let notification_id = notification.id;
+
         toast.Activated(&TypedEventHandler::new(
             move |_, args: &Option<IInspectable>| {
                 let args = args

@@ -233,7 +233,7 @@ pub struct NotificationActivationInfo {
     actions: HashMap<String, String>,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub enum NotificationStatus {
     Activated(u8, NotificationActivationInfo),
     Dismissed(u8),
@@ -272,6 +272,29 @@ struct Args {
 }
 
 #[derive(Subcommand, Debug, Clone)]
+enum TestType {
+    // Create message
+    Simple {
+        /// Title.
+        #[arg(short = 't', long, )]
+        title: String,
+        /// Message.
+        #[arg(short = 'm', long, )]
+        message: String,
+        /// Buttons.
+        #[arg(short = 'b', long)]
+        buttons: Option<String>,
+        /// Print xml.
+        #[arg(long)]
+        debug: bool,
+    },
+    // Raw
+    Raw {
+        #[arg(long, )]
+        xml: String
+    }
+}
+#[derive(Subcommand, Debug, Clone)]
 enum Commands {
     /// Registers application_id in registry. Requires admin rights.
     Register {
@@ -296,6 +319,18 @@ enum Commands {
         /// Output pipe name
         #[arg(short = 'p', long)]
         parent_pipe: Option<String>,
+    },
+    /// Creates sample notification.
+    Test {
+        /// Application Id.
+        #[arg(short = 'a', long, )]
+        application_id: String,
+        /// Wait.
+        #[arg(long)]
+        wait: bool,
+        // Type
+        #[command(subcommand)]
+        test_type: TestType
     },
     /// Starts HTTP API.
     Run {
@@ -364,8 +399,35 @@ async fn main() {
         } => {
             run(application_id, api_key, port, ip).await;
         }
+        Commands::Test {application_id, wait, test_type} => {
+            let (s_sender, s_receiver) = tokio::sync::broadcast::channel::<NotificationStatus>(100);
+            let mut  notifier = Notifier::new(&application_id, s_sender.clone()).expect("Could not create notifier");
+            let content = match test_type {
+                TestType::Simple { title, message, buttons, debug  } => {
+                    let string = utils::create_sample_notification(title.as_str(), message.as_str(), buttons);
+                    if debug {
+                        println!("xml:");
+                        println!("{}", string);
+                    }
+                    ToastContent::Raw(string)
+                }
+                TestType::Raw {xml} => ToastContent::Raw(xml)
+            };
+
+            notifier.notify(NotificationConfig {
+                content
+            }).expect("something was wrong");
+            if wait {
+                if let Ok(res) = s_sender.subscribe().recv().await {
+                    println!("{}", json!(res).to_string());
+                }
+            } else {
+                sleep(Duration::from_secs(1)).await
+            }
+        }
     }
 }
+
 
 async fn run(application_id: Option<String>, api_key: Option<String>, port: u16, ip: String) {
     let application_id = match application_id {
