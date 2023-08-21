@@ -129,12 +129,8 @@ impl Notifier {
         let toast = ToastNotification::CreateToastNotification(&toast_doc)?;
         toast.SetExpiresOnReboot(true)?;
         let _ = &self.notifier.Show(&toast)?;
-
         let a_status_writer = self.status_writer.clone();
-        let d_status_writer = self.status_writer.clone();
-        let f_status_writer = self.status_writer.clone();
         let notification_id = notification.id;
-
         toast.Activated(&TypedEventHandler::new(
             move |_, args: &Option<IInspectable>| {
                 let args = args
@@ -163,6 +159,7 @@ impl Notifier {
                 Ok(())
             },
         ))?;
+        let d_status_writer = self.status_writer.clone();
         toast.Dismissed(&TypedEventHandler::new(move |_, args: &Option<ToastDismissedEventArgs>| {
             if let Some(args) = args {
                 match args.Reason() {
@@ -181,6 +178,7 @@ impl Notifier {
             }
             Ok(())
         }, ))?;
+        let f_status_writer = self.status_writer.clone();
         toast.Failed(&TypedEventHandler::new(
             move |_, args: &Option<ToastFailedEventArgs>| {
                 if let Some(args) = args {
