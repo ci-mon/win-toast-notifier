@@ -39,7 +39,6 @@ use tokio::time::sleep;
 use url::form_urlencoded::parse;
 use winreg::enums::*;
 use winreg::RegKey;
-use registerer::{register_app_id, run_elevated, register_app_id_fallback, unregister_app_id};
 use crate::elevator::elevate;
 use crate::registerer::RegistrationError;
 use crate::elevator::println_pipe;
@@ -91,9 +90,9 @@ enum Commands {
         /// Application display name (notification header)
         #[arg(short = 'n', long)]
         display_name: Option<String>,
-        /// Application icon URI (notification icon)
+        /// Application icon path (notification icon)
         #[arg(short = 'i', long)]
-        icon_uri: Option<String>,
+        icon_path: Option<String>,
         /// Output pipe name
         #[arg(short = 'p', long)]
         parent_pipe: Option<String>,
@@ -180,8 +179,8 @@ pub enum NotificationStatus {
 async fn main() {
     let args = Args::parse();
     match args.command {
-        Commands::Register { application_id, display_name, icon_uri, parent_pipe } => {
-            register(application_id, display_name, icon_uri, &parent_pipe).await;
+        Commands::Register { application_id, display_name, icon_path, parent_pipe } => {
+            register(application_id, display_name, icon_path, &parent_pipe).await;
         }
         Commands::UnRegister { application_id, parent_pipe } => {
             un_register(application_id, &parent_pipe).await;
@@ -209,7 +208,7 @@ async fn test(application_id: &String, wait: bool, test_type: TestType) {
         }
         TestType::Raw { xml } => ToastContent::Raw(xml)
     };
-    register_app_id_fallback(&application_id).unwrap();
+    registerer::register_app_id_fallback(&application_id).unwrap();
     notifier.notify(NotificationConfig {
         content
     }).expect("something was wrong");
@@ -227,21 +226,21 @@ async fn un_register(application_id: String, parent_pipe: &Option<String>) {
         elevator::enable_pipe_output(pipe_name.to_string());
         println_pipe!("Started as elevated");
     }
-    if let Err(RegistrationError::FileError(e, _f)) = unregister_app_id(application_id.clone()) {
+    if let Err(RegistrationError::FileError(e, _f)) = registerer::unregister_app_id(application_id.clone()) {
         if parent_pipe.is_some() {
             println!("Failed to unregister: {}", e.to_string());
         } else {
-            run_elevated("un-register", application_id, None, None).await
+            registerer::run_elevated("un-register", application_id, None, None).await
         }
     }
 }
 
-async fn register(application_id: String, display_name: Option<String>, icon_uri: Option<String>, parent_pipe: &Option<String>) {
+async fn register(application_id: String, display_name: Option<String>, icon_path: Option<String>, parent_pipe: &Option<String>) {
     if let Some(pipe_name) = &parent_pipe {
         elevator::enable_pipe_output(pipe_name.to_string());
         println_pipe!("Started as elevated");
     }
-    match register_app_id(application_id.clone(), display_name.clone(), icon_uri.clone()) {
+    match registerer::register_app_id(application_id.clone(), display_name.clone(), icon_path.clone()) {
         Ok(_) => {
             println_pipe!("Done");
         }
@@ -253,7 +252,7 @@ async fn register(application_id: String, display_name: Option<String>, icon_uri
                         panic!("Error: {} for {}", e.to_string(), file)
                     } else {
                         println!("Failed to register: {}", e.to_string());
-                        run_elevated("register", application_id, display_name, icon_uri).await
+                        registerer::run_elevated("register", application_id, display_name, icon_path).await
                     }
                 }
                 RegistrationError::ArgumentError(msg) => {
@@ -270,7 +269,7 @@ async fn run(application_id: Option<String>, api_key: Option<String>, port: u16,
         None => current_exe().unwrap().file_stem().unwrap().to_str().unwrap().to_string(),
         Some(id) => id.to_string()
     };
-    register_app_id_fallback(&application_id).unwrap();
+    registerer::register_app_id_fallback(&application_id).unwrap();
     let (tx, rx) = oneshot::channel::<()>();
     SHUTDOWN_TX.lock().await.replace(tx);
     let api_key = api_key.unwrap_or(utils::get_random_string(50));
