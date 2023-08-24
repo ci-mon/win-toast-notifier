@@ -2,7 +2,7 @@ pub struct RingBuffer<T> {
     buffer: Vec<Option<T>>,
     capacity: usize,
     write_idx: usize,
-    loop_num: usize
+    loop_num: usize,
 }
 
 impl<T> RingBuffer<T> {
@@ -11,26 +11,20 @@ impl<T> RingBuffer<T> {
             buffer: (0..capacity).map(|_| None).collect(),
             capacity,
             write_idx: 0,
-            loop_num: 0
+            loop_num: 0,
         }
     }
 
     pub fn push(&mut self, item: T) {
         self.buffer[self.write_idx] = Some(item);
-        let mut write_idx = (self.write_idx + 1);
+        let mut write_idx = self.write_idx + 1;
         if write_idx == self.capacity {
             self.loop_num += 1;
             write_idx = 0;
         }
         self.write_idx = write_idx;
     }
-    pub fn read(&self, idx: usize) -> Option<&T> {
-        let slice = self.buffer.as_slice();
-        match slice.get(idx) {
-            Some(Some(item)) => Some(item),
-            _ => None
-        }
-    }
+
     pub fn iter(&self) -> RingBufferIter<'_, T> {
         RingBufferIter {
             ring_buffer: self,
@@ -70,28 +64,29 @@ impl<'a, T> Iterator for RingBufferIter<'a, T> {
         None
     }
 }
+
 #[test]
-fn buffer_test(){
+fn buffer_test() {
     let mut ring_buffer = RingBuffer::new(3);
     ring_buffer.push(0);
-    assert_eq!(ring_buffer.iter().map(|x|x.clone()).collect::<Vec<i32>>(), vec![0]);
+    assert_eq!(ring_buffer.iter().map(|x| x.clone()).collect::<Vec<i32>>(), vec![0]);
     ring_buffer.push(1);
-    assert_eq!(ring_buffer.iter().map(|x|x.clone()).collect::<Vec<i32>>(), vec![0,1]);
+    assert_eq!(ring_buffer.iter().map(|x| x.clone()).collect::<Vec<i32>>(), vec![0, 1]);
     ring_buffer.push(2);
-    assert_eq!(ring_buffer.iter().map(|x|x.clone()).collect::<Vec<i32>>(), vec![0,1,2]);
+    assert_eq!(ring_buffer.iter().map(|x| x.clone()).collect::<Vec<i32>>(), vec![0, 1, 2]);
     ring_buffer.push(3);
-    assert_eq!(ring_buffer.iter().map(|x|x.clone()).collect::<Vec<i32>>(), vec![1,2,3]);
+    assert_eq!(ring_buffer.iter().map(|x| x.clone()).collect::<Vec<i32>>(), vec![1, 2, 3]);
     ring_buffer.push(4);
-    assert_eq!(ring_buffer.iter().map(|x|x.clone()).collect::<Vec<i32>>(), vec![2,3,4]);
+    assert_eq!(ring_buffer.iter().map(|x| x.clone()).collect::<Vec<i32>>(), vec![2, 3, 4]);
 }
 
 #[test]
-fn get_base_index_test(){
+fn get_base_index_test() {
     let mut ring_buffer = RingBuffer::new(3);
     for i in 0..10 {
         ring_buffer.push(i);
         let base_index = ring_buffer.get_base_index();
-        let last_number = ring_buffer.iter().enumerate().map(|(id, _)|id + base_index).last().unwrap();
+        let last_number = ring_buffer.iter().enumerate().map(|(id, _)| id + base_index).last().unwrap();
         assert_eq!(i, last_number);
     }
 }

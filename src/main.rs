@@ -152,8 +152,8 @@ struct NotificationResponse {
 }
 
 enum WorkerMessage {
-    CreateNotificationRequest(NotificationConfig, Sender<Result<u8, String>>),
-    HideNotificationRequest(u8, Sender<Result<(), String>>),
+    CreateNotificationRequest(NotificationConfig, Sender<Result<usize, String>>),
+    HideNotificationRequest(usize, Sender<Result<(), String>>),
     HideAllNotifications(Sender<Result<(), String>>),
 }
 
@@ -172,10 +172,10 @@ pub enum DismissReason {
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub enum NotificationStatus {
-    Activated(u8, NotificationActivationInfo),
-    Dismissed(u8, DismissReason),
-    DismissedError(u8, String),
-    Failed(u8, String),
+    Activated(usize, NotificationActivationInfo),
+    Dismissed(usize, DismissReason),
+    DismissedError(usize, String),
+    Failed(usize, String),
 }
 
 #[tokio::main]
@@ -414,7 +414,7 @@ async fn hide_notification(req: Request<Body>, notifications_pipe: Sender<Worker
             .into_owned()
             .collect::<HashMap<String, String>>();
         if let Some(id_str) = params.get("id") {
-            if let Some(id) = atoi::<u8>(id_str.as_bytes()) {
+            if let Some(id) = atoi::<usize>(id_str.as_bytes()) {
                 return Ok(send_worker_request(notifications_pipe,
                                               |reply| WorkerMessage::HideNotificationRequest(id, reply)).await);
             }

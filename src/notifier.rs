@@ -31,13 +31,13 @@ pub struct NotificationConfig {
 
 #[derive(Debug, Clone)]
 pub struct Notification {
-    id: u8,
+    id: usize,
     config: NotificationConfig,
     toast: Option<Box<ToastNotification>>,
 }
 
 pub struct Notifier {
-    notifications: HashMap<u8, Notification>,
+    notifications: HashMap<usize, Notification>,
     notifier: ToastNotifier,
     status_writer: event_log::Sender<NotificationStatus>,
 }
@@ -55,9 +55,9 @@ impl Notifier {
             Err(e) => Err(e.message().to_string_lossy())
         }
     }
-    pub(crate) fn notify(&mut self, config: NotificationConfig) -> Result<u8, String> {
+    pub(crate) fn notify(&mut self, config: NotificationConfig) -> Result<usize, String> {
         let mut random = rand::thread_rng();
-        let mut id: u8 = random.gen();
+        let mut id: usize = random.gen();
         while self.notifications.contains_key(&id) {
             id = random.gen();
         }
@@ -92,7 +92,7 @@ impl Notifier {
         Ok(())
     }
 
-    pub fn hide_by_id(&mut self, id: u8) -> Result<(), String> {
+    pub fn hide_by_id(&mut self, id: usize) -> Result<(), String> {
         match self.notifications.remove(&id) {
             None => {
                 Err("Not found".to_string())

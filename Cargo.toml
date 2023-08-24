@@ -47,6 +47,10 @@ features = [
     "Win32_UI_WindowsAndMessaging"
 ]
 
-
 [package.metadata.docs.rs]
 default-target = "x86_64-pc-windows-msvc"
+
+[profile.release]
+strip = true
+opt-level = "z"
+lto = true

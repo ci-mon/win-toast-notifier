@@ -16,9 +16,6 @@ pub struct Sender<TEvent>
 impl<TEvent> Sender<TEvent>
     where TEvent : Clone
 {
-    pub async fn send(&self, item: TEvent) -> Result<(), SendError<EventLogEntry<TEvent>>> {
-        self.inner_sender.send(EventLogEntry::Item(item)).await
-    }
 
     pub fn blocking_send(&self, item: TEvent) -> Result<(), SendError<EventLogEntry<TEvent>>> {
         self.inner_sender.blocking_send(EventLogEntry::Item(item))
@@ -53,10 +50,6 @@ impl<TEvent> Subscriber<TEvent>
 {
     pub async fn recv(&mut self) -> Option<(usize, TEvent)> {
         self._inner_recv.recv().await
-    }
-
-    pub fn try_recv(&mut self) -> Result<(usize, TEvent), tokio::sync::mpsc::error::TryRecvError> {
-        self._inner_recv.try_recv()
     }
 
     pub async fn drop_async(&mut self) {
