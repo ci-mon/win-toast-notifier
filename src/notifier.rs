@@ -4,7 +4,7 @@ use std::io::Error;
 use std::ops::Deref;
 use std::sync::Arc;
 use rand::Rng;
-use tokio::sync::broadcast::Sender;
+use tokio::sync::mpsc::Sender;
 use windows::Foundation::IReference;
 use windows::UI::Notifications::{ToastDismissalReason, ToastNotifier};
 use windows::{
@@ -16,7 +16,7 @@ use windows::{
         ToastFailedEventArgs, ToastNotification, ToastNotificationManager,
     },
 };
-use crate::{DismissReason, NotificationActivationInfo, NotificationStatus};
+use crate::{DismissReason, event_log, NotificationActivationInfo, NotificationStatus};
 
 #[derive(Debug, Clone)]
 pub enum ToastContent {
@@ -39,11 +39,11 @@ pub struct Notification {
 pub struct Notifier {
     notifications: HashMap<u8, Notification>,
     notifier: ToastNotifier,
-    status_writer: Sender<NotificationStatus>,
+    status_writer: event_log::Sender<NotificationStatus>,
 }
 
 impl Notifier {
-    pub fn new(application_id: &String, s_sender: Sender<NotificationStatus>) -> Result<Notifier, String> {
+    pub fn new(application_id: &String, s_sender: event_log::Sender<NotificationStatus>) -> Result<Notifier, String> {
         match ToastNotificationManager::CreateToastNotifierWithId(&hs(application_id)) {
             Ok(notifier) => {
                 Ok(Notifier {
@@ -150,11 +150,11 @@ impl Notifier {
                         actions.insert(key, val_str);
                     }
                     let info = NotificationActivationInfo {
-                        arguments: arguments,
-                        actions: actions,
+                        arguments,
+                        actions,
                     };
                     let status = NotificationStatus::Activated(notification_id, info);
-                    a_status_writer.send(status).ok();
+                    a_status_writer.blocking_send(status).ok();
                 }
                 Ok(())
             },
@@ -162,19 +162,20 @@ impl Notifier {
         let d_status_writer = self.status_writer.clone();
         toast.Dismissed(&TypedEventHandler::new(move |_, args: &Option<ToastDismissedEventArgs>| {
             if let Some(args) = args {
-                match args.Reason() {
+                let status = match args.Reason() {
                     Ok(reason) => {
                         let reason = match reason {
                             ToastDismissalReason::UserCanceled => DismissReason::UserCanceled,
                             ToastDismissalReason::ApplicationHidden => DismissReason::ApplicationHidden,
                             _ => DismissReason::TimedOut,
                         };
-                        d_status_writer.send(NotificationStatus::Dismissed(notification_id, reason)).ok();
+                        NotificationStatus::Dismissed(notification_id, reason)
                     }
                     Err(e) => {
-                        d_status_writer.send(NotificationStatus::DismissedError(notification_id, e.message().to_string())).ok();
+                        NotificationStatus::DismissedError(notification_id, e.message().to_string())
                     }
                 };
+                d_status_writer.blocking_send(status).ok();
             }
             Ok(())
         }, ))?;
@@ -184,7 +185,8 @@ impl Notifier {
                 if let Some(args) = args {
                     let e = args.ErrorCode().and_then(|e| e.ok());
                     if let Err(e) = e {
-                        f_status_writer.send(NotificationStatus::Failed(notification_id, e.message().to_string())).ok();
+                        let status = NotificationStatus::Failed(notification_id, e.message().to_string());
+                        f_status_writer.blocking_send(status).ok();
                     }
                 }
                 Ok(())

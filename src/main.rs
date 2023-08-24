@@ -5,6 +5,8 @@ mod registerer;
 mod elevator;
 mod elevator_values;
 mod utils;
+mod event_log;
+mod ring_buffer;
 
 use std::collections::HashMap;
 use std::env;
@@ -42,6 +44,7 @@ use winreg::RegKey;
 use crate::elevator::elevate;
 use crate::registerer::RegistrationError;
 use crate::elevator::println_pipe;
+use crate::event_log::event_log;
 
 
 lazy_static! {
@@ -185,8 +188,8 @@ async fn main() {
         Commands::UnRegister { application_id, parent_pipe } => {
             un_register(application_id, &parent_pipe).await;
         }
-        Commands::Listen { application_id, api_key, port, ip} => {
-            run(application_id, api_key, port, ip).await;
+        Commands::Listen { application_id, api_key, port, ip } => {
+            listen(application_id, api_key, port, ip).await;
         }
         Commands::Test { application_id, wait, test_type } => {
             test(&application_id, wait, test_type).await;
@@ -195,8 +198,11 @@ async fn main() {
 }
 
 async fn test(application_id: &String, wait: bool, test_type: TestType) {
-    let (s_sender, _s_receiver) = tokio::sync::broadcast::channel::<NotificationStatus>(100);
-    let mut notifier = Notifier::new(&application_id, s_sender.clone()).expect("Could not create notifier");
+    let (n_sender, mut n_recv) = event_log::<NotificationStatus>(1000);
+    tokio::spawn(async move {
+        n_recv.route().await;
+    });
+    let mut notifier = Notifier::new(&application_id, n_sender.clone()).expect("Could not create notifier");
     let content = match test_type {
         TestType::Simple { title, message, buttons, debug } => {
             let string = utils::create_sample_notification(title.as_str(), message.as_str(), buttons);
@@ -213,8 +219,11 @@ async fn test(application_id: &String, wait: bool, test_type: TestType) {
         content
     }).expect("something was wrong");
     if wait {
-        if let Ok(res) = s_sender.subscribe().recv().await {
-            println!("{}", json!(res).to_string());
+        if let Some((num, res)) = n_sender.subscribe().await.recv().await {
+            println!("{}", json!({
+                "event_number": num,
+                "event": res
+            }).to_string());
         }
     } else {
         sleep(Duration::from_secs(1)).await
@@ -264,7 +273,7 @@ async fn register(application_id: String, display_name: Option<String>, icon_pat
 }
 
 
-async fn run(application_id: Option<String>, api_key: Option<String>, port: u16, ip: String) {
+async fn listen(application_id: Option<String>, api_key: Option<String>, port: u16, ip: String) {
     let application_id = match application_id {
         None => current_exe().unwrap().file_stem().unwrap().to_str().unwrap().to_string(),
         Some(id) => id.to_string()
@@ -281,17 +290,20 @@ async fn run(application_id: Option<String>, api_key: Option<String>, port: u16,
     }
     let addr = SocketAddr::from((ip.parse::<Ipv4Addr>().expect("invalid ip address"), port));
     let (w_sender, w_receiver) = mpsc::channel::<WorkerMessage>(32);
-    let (s_sender, _s_receiver) = tokio::sync::broadcast::channel::<NotificationStatus>(100);
-    let notifier = Notifier::new(&application_id, s_sender.clone()).expect("Could not create notifier");
+    let (n_sender, mut n_recv) = event_log::<NotificationStatus>(1000);
+    tokio::spawn(async move {
+        n_recv.route().await;
+    });
+    let notifier = Notifier::new(&application_id, n_sender.clone()).expect("Could not create notifier");
     let processing_task = tokio::spawn(async move {
         process_notification_api_messages(notifier, w_receiver).await;
     });
     let make_svc = make_service_fn(move |_conn| {
         let w_sender = w_sender.clone();
-        let s_sender = s_sender.clone();
+        let n_sub_factory = n_sender.clone();
         async move {
             Ok::<_, Box<dyn Error + Send + Sync>>(service_fn(move |req: Request<Body>| {
-                http_handler(req, w_sender.clone(), s_sender.clone())
+                http_handler(req, w_sender.clone(), n_sub_factory.clone())
             }))
         }
     });
@@ -351,7 +363,7 @@ fn get_notification_content(request: NotificationRequest) -> Option<ToastContent
     content
 }
 
-async fn http_handler(req: Request<Body>, notifications_pipe: Sender<WorkerMessage>, s_sender: tokio::sync::broadcast::Sender<NotificationStatus>) -> Result<Response<Body>, Box<dyn Error + Send + Sync>> {
+async fn http_handler(req: Request<Body>, notifications_pipe: Sender<WorkerMessage>, s_sender: event_log::Sender<NotificationStatus>) -> Result<Response<Body>, Box<dyn Error + Send + Sync>> {
     if let false = is_authorized(&req) {
         Ok(Response::builder().status(StatusCode::UNAUTHORIZED).body(Body::empty()).unwrap())
     } else {
@@ -375,8 +387,10 @@ async fn http_handler(req: Request<Body>, notifications_pipe: Sender<WorkerMessa
                 }
             }
             _ => {
-                let mut not_found = Response::default();
-                *not_found.status_mut() = StatusCode::NOT_FOUND;
+                let not_found = Response::builder()
+                    .status(StatusCode::NOT_FOUND)
+                    .body(Body::from("Endpoint not found"))
+                    .unwrap();
                 Ok(not_found)
             }
         }
@@ -413,40 +427,55 @@ async fn hide_all_notification(notifications_pipe: Sender<WorkerMessage>) -> Res
     Ok(send_worker_request(notifications_pipe, |reply| WorkerMessage::HideAllNotifications(reply)).await)
 }
 
-async fn get_status(_req: Request<Body>, s_sender: tokio::sync::broadcast::Sender<NotificationStatus>) -> Result<Response<Body>, Box<dyn Error + Send + Sync>> {
+async fn get_status(_req: Request<Body>, s_sender: event_log::Sender<NotificationStatus>) -> Result<Response<Body>, Box<dyn Error + Send + Sync>> {
+    let last_number = _req.uri().query().map(|q|form_urlencoded::parse(q.as_bytes())
+        .into_owned()
+        .collect::<HashMap<String, String>>())
+        .and_then(|h|h.get("from").map(|x|x.to_string()))
+        .and_then(|id|atoi::<usize>(id.as_bytes()))
+        .unwrap_or(0);
+
     let (mut body_tx, body) = Body::channel();
+    let mut subscriber = s_sender.subscribe().await;
     tokio::spawn(async move {
-        let mut s_rx = s_sender.subscribe();
         loop {
-            match s_rx.recv().await {
-                Ok(status) => {
+            match subscriber.recv().await {
+                Some((num, status)) => {
+                    if last_number > num {
+                        continue;
+                    }
                     let message: String = match status {
                         NotificationStatus::Activated(id, info) => {
                             json!({
+                                "number": num,
                                 "id": id,
                                 "info": info
                             }).to_string()
                         }
                         NotificationStatus::Dismissed(id, reason) => {
                             json!({
+                                "number": num,
                                 "id": id,
                                 "reason": reason,
                             }).to_string()
                         }
                         NotificationStatus::DismissedError(id, msg) => {
                             json!({
+                                "number": num,
                                 "id": id,
                                 "desc": msg
                             }).to_string()
                         }
                         NotificationStatus::Failed(id, msg) => {
                             json!({
+                                "number": num,
                                 "id": id,
                                 "desc": msg
                             }).to_string()
                         }
                     };
                     if body_tx.send_data(hyper::body::Bytes::from(message + "\n")).await.is_err() {
+                        subscriber.drop_async().await;
                         break;
                     }
                 }

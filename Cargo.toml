@@ -27,6 +27,7 @@ sanitize-filename = "0.5.0"
 winreg = "0.50.0"
 named_pipe = "0.4.1"
 widestring = "1.0.2"
+uuid = { version = "1.4.1", features = ["v4"] }
 
 [dependencies.windows]
 version = "0.51.1"
