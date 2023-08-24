@@ -27,7 +27,7 @@ Api-Key: 1
 Content-Type: application/json
 
 {
-"toast_xml_path": "F:\\Rust\\win-toast-notifier\\toast.xml"
+    "toast_xml_path": "F:\\Rust\\win-toast-notifier\\toast.xml"
 }
 ```
 
@@ -36,7 +36,7 @@ POST http://localhost:7070/notify
 Content-Type: application/json
 
 {
-"toast_xml": "<toast><visual><binding template=\"ToastGeneric\"><text>Hello World</text><text>This is a simple toast message</text></binding></visual></toast>"
+    "toast_xml": "<toast><visual><binding template=\"ToastGeneric\"><text>Hello World</text><text>This is a simple toast message</text></binding></visual></toast>"
 }
 ```
 
@@ -49,15 +49,13 @@ DELETE http://localhost:7070/all
 ```
 
 ```http request
-GET localhost:7070
-```
-
-```http request
 GET localhost:7070/quit
+
 Api-Key: 1
 ```
 
 ```http request
 GET localhost:7070/status-stream?from=2
+
 Api-Key: 1
 ```
