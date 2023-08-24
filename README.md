@@ -49,13 +49,13 @@ DELETE http://localhost:7070/all
 ```
 
 ```http request
-GET localhost:7070/quit
+GET http://localhost:7070/quit
 
 Api-Key: 1
 ```
 
 ```http request
-GET localhost:7070/status-stream?from=2
+GET http://localhost:7070/status-stream?from=2
 
 Api-Key: 1
 ```
