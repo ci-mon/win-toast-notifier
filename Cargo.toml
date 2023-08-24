@@ -10,24 +10,24 @@ description = "Provides HTTP API to windows toast notifications interop"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-scopeguard = { default-features = false, version = "1.1.0" }
+scopeguard = "1.1.0"
 thiserror = "1.0.44"
 url = "2.2.2"
-hyper = { version = "0.14", features = ["full"], default-features = false }
-tokio = { version = "1", features = ["full"], default-features = false }
+hyper = { version = "0.14", features = ["full"] }
+tokio = { version = "1", features = ["full"] }
 rand = "0.8.5"
 serde_json = "1.0"
-serde = { version = "1.0", features = ["serde_derive"], default-features = false }
-atoi = { default-features = false, version = "2.0.0" }
+serde = { version = "1.0", features = ["derive"] }
+atoi = "2.0.0"
 lazy_static = "1.4.0"
-clap = { version = "4.3.21", features = ["derive", "std"], default-features = false }
+clap = { version = "4.3.21", features = ["derive"] }
 mslnk = "0.1.8"
 dirs-next = "2.0.0"
 sanitize-filename = "0.5.0"
 winreg = "0.50.0"
 named_pipe = "0.4.1"
-widestring = { default-features = false, version = "1.0.2" }
-uuid = { version = "1.4.1", features = ["v4"], default-features = false }
+widestring = "1.0.2"
+uuid = { version = "1.4.1", features = ["v4"] }
 
 [dependencies.windows]
 version = "0.51.1"
