@@ -360,10 +360,10 @@ async fn http_handler(req: Request<Body>, notifications_pipe: Sender<WorkerMessa
                 let response = Response::new(Body::from("POST /notification"));
                 Ok(response)
             }
-            (&Method::POST, "/notification") => notify(req, notifications_pipe).await,
-            (&Method::GET, "/status") => get_status(req, s_sender).await,
+            (&Method::POST, "/notify") => notify(req, notifications_pipe).await,
+            (&Method::GET, "/status-stream") => get_status(req, s_sender).await,
             (&Method::DELETE, "/notification") => hide_notification(req, notifications_pipe).await,
-            (&Method::DELETE, "/all-notifications") => hide_all_notification(notifications_pipe).await,
+            (&Method::DELETE, "/all") => hide_all_notification(notifications_pipe).await,
             (_, "/quit") => {
                 match SHUTDOWN_TX.lock().await.take().map(|x| x.send(())) {
                     Some(Ok(_)) => {
