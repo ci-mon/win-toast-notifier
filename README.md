@@ -1,4 +1,4 @@
-# win-toast-notifier
+# Win toast notifier - easy windows toast notifications
 Toast notification app with HTTP API
 
 ## Command line API
