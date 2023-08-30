@@ -24,7 +24,7 @@ use hyper::{Body, Request, Response, Server, Method, StatusCode, header};
 use hyper::body::{Buf};
 use hyper::service::{make_service_fn, service_fn};
 use rand::{Rng, distributions::Alphanumeric};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, Serializer};
 use serde_json::json;
 use crate::notifier::{Notifier, ToastContent};
 use crate::notifier::NotificationConfig;
@@ -39,13 +39,13 @@ use clap::{Parser, Subcommand};
 use tokio::fs;
 use tokio::time::sleep;
 use url::form_urlencoded::parse;
+use uuid::Uuid;
 use winreg::enums::*;
 use winreg::RegKey;
 use crate::elevator::elevate;
 use crate::registerer::RegistrationError;
 use crate::elevator::println_pipe;
 use crate::event_log::event_log;
-
 
 lazy_static! {
     static ref SHUTDOWN_TX: Arc<Mutex<Option<oneshot::Sender<()>>>> = <_>::default();
@@ -152,8 +152,8 @@ struct NotificationResponse {
 }
 
 enum WorkerMessage {
-    CreateNotificationRequest(NotificationConfig, Sender<Result<usize, String>>),
-    HideNotificationRequest(usize, Sender<Result<(), String>>),
+    CreateNotificationRequest(NotificationConfig, Sender<Result<Uuid, String>>),
+    HideNotificationRequest(Uuid, Sender<Result<(), String>>),
     HideAllNotifications(Sender<Result<(), String>>),
 }
 
@@ -172,10 +172,10 @@ pub enum DismissReason {
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub enum NotificationStatus {
-    Activated(usize, NotificationActivationInfo),
-    Dismissed(usize, DismissReason),
-    DismissedError(usize, String),
-    Failed(usize, String),
+    Activated(String, NotificationActivationInfo),
+    Dismissed(String, DismissReason),
+    DismissedError(String, String),
+    Failed(String, String),
 }
 
 #[tokio::main]
@@ -336,7 +336,7 @@ async fn notify(req: Request<Body>, push_notification: Sender<WorkerMessage>) ->
     match id {
         Ok(id_value) => {
             let response_body = json!({
-                "id": id_value
+                "id": id_value.to_string()
             });
             let response = Response::builder()
                 .status(StatusCode::OK)
@@ -414,7 +414,7 @@ async fn hide_notification(req: Request<Body>, notifications_pipe: Sender<Worker
             .into_owned()
             .collect::<HashMap<String, String>>();
         if let Some(id_str) = params.get("id") {
-            if let Some(id) = atoi::<usize>(id_str.as_bytes()) {
+            if let Ok(id) = Uuid::parse_str(id_str) {
                 return Ok(send_worker_request(notifications_pipe,
                                               |reply| WorkerMessage::HideNotificationRequest(id, reply)).await);
             }
@@ -449,28 +449,32 @@ async fn get_status(_req: Request<Body>, s_sender: event_log::Sender<Notificatio
                             json!({
                                 "number": num,
                                 "id": id,
-                                "info": info
+                                "info": info,
+                                "type": "Activated"
                             }).to_string()
                         }
                         NotificationStatus::Dismissed(id, reason) => {
                             json!({
                                 "number": num,
                                 "id": id,
-                                "reason": reason,
+                                "dismissReason": reason,
+                                "type": "Dismissed"
                             }).to_string()
                         }
                         NotificationStatus::DismissedError(id, msg) => {
                             json!({
                                 "number": num,
                                 "id": id,
-                                "desc": msg
+                                "description": msg,
+                                "type": "DismissedError"
                             }).to_string()
                         }
                         NotificationStatus::Failed(id, msg) => {
                             json!({
                                 "number": num,
                                 "id": id,
-                                "desc": msg
+                                "description": msg,
+                                "type": "Failed"
                             }).to_string()
                         }
                     };

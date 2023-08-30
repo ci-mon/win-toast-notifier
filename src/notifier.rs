@@ -5,6 +5,7 @@ use std::ops::Deref;
 use std::sync::Arc;
 use rand::Rng;
 use tokio::sync::mpsc::Sender;
+use uuid::Uuid;
 use windows::Foundation::IReference;
 use windows::UI::Notifications::{ToastDismissalReason, ToastNotifier};
 use windows::{
@@ -31,13 +32,13 @@ pub struct NotificationConfig {
 
 #[derive(Debug, Clone)]
 pub struct Notification {
-    id: usize,
+    id: Uuid,
     config: NotificationConfig,
     toast: Option<Box<ToastNotification>>,
 }
 
 pub struct Notifier {
-    notifications: HashMap<usize, Notification>,
+    notifications: HashMap<Uuid, Notification>,
     notifier: ToastNotifier,
     status_writer: event_log::Sender<NotificationStatus>,
 }
@@ -55,11 +56,10 @@ impl Notifier {
             Err(e) => Err(e.message().to_string_lossy())
         }
     }
-    pub(crate) fn notify(&mut self, config: NotificationConfig) -> Result<usize, String> {
-        let mut random = rand::thread_rng();
-        let mut id: usize = random.gen();
+    pub(crate) fn notify(&mut self, config: NotificationConfig) -> Result<Uuid, String> {
+        let mut id: Uuid = Uuid::new_v4();
         while self.notifications.contains_key(&id) {
-            id = random.gen();
+            id = Uuid::new_v4();
         }
         let mut notification = Notification { id, config, toast: None };
         let raw_content = match &notification.config.content {
@@ -92,7 +92,7 @@ impl Notifier {
         Ok(())
     }
 
-    pub fn hide_by_id(&mut self, id: usize) -> Result<(), String> {
+    pub fn hide_by_id(&mut self, id: Uuid) -> Result<(), String> {
         match self.notifications.remove(&id) {
             None => {
                 Err("Not found".to_string())
@@ -153,7 +153,7 @@ impl Notifier {
                         arguments,
                         actions,
                     };
-                    let status = NotificationStatus::Activated(notification_id, info);
+                    let status = NotificationStatus::Activated(notification_id.to_string(), info);
                     a_status_writer.blocking_send(status).ok();
                 }
                 Ok(())
@@ -169,10 +169,10 @@ impl Notifier {
                             ToastDismissalReason::ApplicationHidden => DismissReason::ApplicationHidden,
                             _ => DismissReason::TimedOut,
                         };
-                        NotificationStatus::Dismissed(notification_id, reason)
+                        NotificationStatus::Dismissed(notification_id.to_string(), reason)
                     }
                     Err(e) => {
-                        NotificationStatus::DismissedError(notification_id, e.message().to_string())
+                        NotificationStatus::DismissedError(notification_id.to_string(), e.message().to_string())
                     }
                 };
                 d_status_writer.blocking_send(status).ok();
@@ -185,7 +185,7 @@ impl Notifier {
                 if let Some(args) = args {
                     let e = args.ErrorCode().and_then(|e| e.ok());
                     if let Err(e) = e {
-                        let status = NotificationStatus::Failed(notification_id, e.message().to_string());
+                        let status = NotificationStatus::Failed(notification_id.to_string(), e.message().to_string());
                         f_status_writer.blocking_send(status).ok();
                     }
                 }
