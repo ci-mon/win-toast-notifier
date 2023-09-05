@@ -235,6 +235,10 @@ async fn un_register(application_id: String, parent_pipe: &Option<String>) {
         elevator::enable_pipe_output(pipe_name.to_string());
         println_pipe!("Started as elevated");
     }
+    if std::fs::metadata(&application_id).is_ok() {
+        registerer::un_register_app_id_fallback(&application_id).expect("Failed to unregister");
+        return;
+    }
     if let Err(RegistrationError::FileError(e, _f)) = registerer::unregister_app_id(application_id.clone()) {
         if parent_pipe.is_some() {
             println!("Failed to unregister: {}", e.to_string());

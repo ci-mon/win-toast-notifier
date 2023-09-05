@@ -6,6 +6,7 @@ use std::fs::metadata;
 use std::os::windows::ffi::OsStrExt;
 use std::path::PathBuf;
 use clap::builder::Str;
+use serde::de::Error;
 use winreg::enums::{HKEY_CLASSES_ROOT, KEY_ALL_ACCESS, KEY_SET_VALUE};
 use winreg::RegKey;
 use crate::{elevator, println_pipe, utils};
@@ -97,15 +98,29 @@ fn update_value(key: &RegKey, name: &str, value: Option<String>) -> Result<(), R
     Ok(())
 }
 
+pub fn un_register_app_id_fallback(path: &String) -> Result<(), String> {
+    let link_name = get_link_name(&path);
+    let destination = get_link_path(link_name)?;
+    if metadata(&destination).is_ok() {
+        std::fs::remove_file(destination.clone()).map_err(|e|e.to_string())?;
+        println!("Removed: {}", destination.to_str().unwrap());
+    }
+    Ok(())
+}
+
+fn get_link_path(link_name: String) -> Result<PathBuf, String> {
+    Ok(dirs_next::home_dir().ok_or("Could not find home dir")?
+        .join(r"AppData\Roaming\Microsoft\Windows\Start Menu\Programs")
+        .join(format!("{link_name}.lnk")))
+}
+
 pub fn register_app_id_fallback(app_id: &String) -> Result<(), String> {
     let path = app_id.to_string();
     if !metadata(&app_id).is_ok() {
         return Ok(());
     };
-    let link_name = PathBuf::from(path.clone()).file_stem().map(|x| x.to_str().unwrap().to_string()).unwrap_or(path.clone());
-    let destination = dirs_next::home_dir().ok_or("Could not find home dir")?
-        .join(r"AppData\Roaming\Microsoft\Windows\Start Menu\Programs")
-        .join(format!("{link_name}.lnk"));
+    let link_name = get_link_name(&path);
+    let destination = get_link_path(link_name.clone())?;
     if metadata(&destination).is_ok() {
         return Ok(());
     }
@@ -116,4 +131,8 @@ pub fn register_app_id_fallback(app_id: &String) -> Result<(), String> {
     link.create_lnk(destination.clone()).map_err(|e| e.to_string())?;
     println!("Registered in {}", destination.to_str().unwrap());
     Ok(())
+}
+
+fn get_link_name(path: &String) -> String {
+    PathBuf::from(path.clone()).file_stem().map(|x| x.to_str().unwrap().to_string()).unwrap_or(path.clone())
 }
