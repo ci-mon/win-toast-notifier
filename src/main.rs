@@ -240,6 +240,7 @@ async fn un_register(application_id: String, parent_pipe: &Option<String>) {
             println!("Failed to unregister: {}", e.to_string());
         } else {
             registerer::run_elevated("un-register", application_id, None, None).await
+                .expect("Failed to run as admin");
         }
     }
 }
@@ -249,21 +250,24 @@ async fn register(application_id: String, display_name: Option<String>, icon_pat
         elevator::enable_pipe_output(pipe_name.to_string());
         println_pipe!("Started as elevated");
     }
+    if std::fs::metadata(&application_id).is_ok() && display_name.is_none() {
+        registerer::register_app_id_fallback(&application_id).expect("Failed to register");
+        return;
+    }
     match registerer::register_app_id(application_id.clone(), display_name.clone(), icon_path.clone()) {
         Ok(_) => {
             println_pipe!("Done");
         }
         Err(err) => {
             match err {
-                RegistrationError::FileError(e, file) => {
-                    if parent_pipe.is_some() {
-                        println_pipe!("{} {}", e.to_string(), file);
-                        panic!("Error: {} for {}", e.to_string(), file)
-                    } else {
-                        println!("Failed to register: {}", e.to_string());
-                        registerer::run_elevated("register", application_id, display_name, icon_path).await
-                    }
-                }
+                RegistrationError::FileError(e, file) => if parent_pipe.is_some() {
+                    println_pipe!("{} {}", e.to_string(), file);
+                    panic!("Error: {} for {}", e.to_string(), file)
+                } else {
+                    println!("Failed to register: {}", e.to_string());
+                    registerer::run_elevated("register", application_id.clone(), display_name, icon_path).await
+                        .expect("Cant run elevated");
+                },
                 RegistrationError::ArgumentError(msg) => {
                     println_pipe!("{}", msg);
                 }
@@ -428,11 +432,11 @@ async fn hide_all_notification(notifications_pipe: Sender<WorkerMessage>) -> Res
 }
 
 async fn get_status(_req: Request<Body>, s_sender: event_log::Sender<NotificationStatus>) -> Result<Response<Body>, Box<dyn Error + Send + Sync>> {
-    let last_number = _req.uri().query().map(|q|form_urlencoded::parse(q.as_bytes())
+    let last_number = _req.uri().query().map(|q| form_urlencoded::parse(q.as_bytes())
         .into_owned()
         .collect::<HashMap<String, String>>())
-        .and_then(|h|h.get("from").map(|x|x.to_string()))
-        .and_then(|id|atoi::<usize>(id.as_bytes()))
+        .and_then(|h| h.get("from").map(|x| x.to_string()))
+        .and_then(|id| atoi::<usize>(id.as_bytes()))
         .unwrap_or(0);
 
     let (mut body_tx, body) = Body::channel();

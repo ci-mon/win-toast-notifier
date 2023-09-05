@@ -97,7 +97,7 @@ impl Display for WideString {
     }
 }
 
-pub async fn elevate(exe_path: String, args: String, pipe_name: String) {
+pub async fn elevate(exe_path: String, args: String, pipe_name: String) -> Result<(), String> {
     println!("Try running as elevated {} {}", exe_path, args);
     let dump_task = dump_pipe(pipe_name);
     let exe_path = WideString::new(exe_path);
@@ -121,14 +121,16 @@ pub async fn elevate(exe_path: String, args: String, pipe_name: String) {
     };
     if let Err(e) = unsafe { ShellExecuteExW(&mut exec_info) } {
         println!("Failed to execute as admin: {}", e.message().to_string());
-        return;
+        return Err(e.message().to_string());
     }
     let wait_result = unsafe { WaitForSingleObject(exec_info.hProcess, INFINITE) };
     if wait_result == windows::Win32::Foundation::WAIT_OBJECT_0 {
         println!("Process completed.");
         dump_task.join().unwrap();
+        return Ok(());
     } else {
         println!("Failed to wait for process completion.");
+        return Err("Failed to wait for process completion.".to_string());
     }
 }
 
