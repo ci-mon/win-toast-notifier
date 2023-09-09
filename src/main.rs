@@ -160,7 +160,7 @@ enum WorkerMessage {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct NotificationActivationInfo {
     arguments: String,
-    actions: HashMap<String, String>,
+    inputs: HashMap<String, String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]

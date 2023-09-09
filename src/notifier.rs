@@ -136,7 +136,7 @@ impl Notifier {
                 let args = args
                     .as_ref()
                     .and_then(|arg| arg.cast::<ToastActivatedEventArgs>().ok());
-                let mut actions = HashMap::<String, String>::new();
+                let mut inputs = HashMap::<String, String>::new();
                 if let Some(args) = args {
                     let arguments = args.Arguments().map(|s| s.to_string_lossy()).unwrap();
                     let user_input = args.UserInput()?;
@@ -147,11 +147,11 @@ impl Notifier {
                             .cast::<IReference<HSTRING>>()?
                             .GetString()?
                             .to_string_lossy();
-                        actions.insert(key, val_str);
+                        inputs.insert(key, val_str);
                     }
                     let info = NotificationActivationInfo {
                         arguments,
-                        actions,
+                        inputs,
                     };
                     let status = NotificationStatus::Activated(notification_id.to_string(), info);
                     a_status_writer.blocking_send(status).ok();
