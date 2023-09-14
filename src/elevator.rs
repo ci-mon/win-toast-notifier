@@ -1,26 +1,26 @@
-use std::ptr::null_mut;
-use std::{env, fmt, str, thread};
+use named_pipe::PipeClient;
 use std::ffi::{CString, OsStr};
-use std::fmt::{Display, format, Formatter, Pointer};
+use std::fmt::{format, Display, Formatter, Pointer};
+use std::fs::File;
 use std::os::windows::ffi::OsStrExt;
 use std::process::{Command, Stdio};
-use named_pipe::PipeClient;
-use std::fs::File;
+use std::ptr::null_mut;
+use std::{env, fmt, str, thread};
 
-use windows::Win32::System::Console::{SetStdHandle, STD_OUTPUT_HANDLE};
-use windows::Win32::Storage::FileSystem;
-use windows::Win32::UI::Shell::{ShellExecuteExW, SHELLEXECUTEINFOW, SEE_MASK_NOCLOSEPROCESS};
-use windows::Win32::System::Threading::{WaitForSingleObject, INFINITE};
-use std::ptr;
+use lazy_static::lazy_static;
+use serde_json::to_string;
+use std::io::{stdout, Read, Write};
 use std::os::windows::io::AsRawHandle;
-use std::io::{Read, stdout, Write};
+use std::ptr;
 use std::sync::{Arc, LockResult, Mutex};
 use std::thread::sleep;
 use std::time::Duration;
-use lazy_static::lazy_static;
-use serde_json::to_string;
 use tokio::task::JoinHandle;
-use windows::core::{PCWSTR, w};
+use windows::core::{w, PCWSTR};
+use windows::Win32::Storage::FileSystem;
+use windows::Win32::System::Console::{SetStdHandle, STD_OUTPUT_HANDLE};
+use windows::Win32::System::Threading::{WaitForSingleObject, INFINITE};
+use windows::Win32::UI::Shell::{ShellExecuteExW, SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW};
 macro_rules! println_pipe {
     ($($arg:tt)*) => {{
         use std::io::{stdout, Write};
@@ -60,8 +60,10 @@ pub fn dump_pipe(pipe_name: String) -> thread::JoinHandle<()> {
     thread::spawn(|| {
         let pipe_name = get_pipe_name(pipe_name);
         let mut pipe = named_pipe::PipeOptions::new(pipe_name)
-            .single().unwrap()
-            .wait().unwrap();
+            .single()
+            .unwrap()
+            .wait()
+            .unwrap();
         let mut buffer: Vec<u8> = vec![];
         if pipe.read_to_end(&mut buffer).is_ok() {
             if let Ok(msg) = String::from_utf8(buffer) {
@@ -76,12 +78,15 @@ pub fn dump_pipe(pipe_name: String) -> thread::JoinHandle<()> {
 
 struct WideString {
     pub source_string: String,
-    bytes: Vec<u16>
+    bytes: Vec<u16>,
 }
 impl WideString {
     pub fn new(str: String) -> WideString {
         let res = WideString {
-            bytes: str.encode_utf16().chain(::std::iter::once(0)).collect::<Vec<u16>>(),
+            bytes: str
+                .encode_utf16()
+                .chain(::std::iter::once(0))
+                .collect::<Vec<u16>>(),
             source_string: str,
         };
         res
@@ -136,7 +141,12 @@ pub async fn elevate(exe_path: String, args: String, pipe_name: String) -> Resul
 
 #[tokio::test]
 async fn elevate_test() {
-    elevate(r"F:\Rust\admin\target\debug\admin.exe".to_string(),  "aaaa aa".to_string(), "test".to_string()).await;
+    elevate(
+        r"F:\Rust\admin\target\debug\admin.exe".to_string(),
+        "aaaa aa".to_string(),
+        "test".to_string(),
+    )
+    .await;
 }
 #[test]
 fn elevate_tes1() {
@@ -145,7 +155,10 @@ fn elevate_tes1() {
         let args_original = "aaaa aaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string();
         let exe_path = WideString::new(exe_path_original.clone());
         let args = WideString::new(args_original.clone());
-        assert_eq!(exe_path_original, exe_path.to_pcwstr().display().to_string());
+        assert_eq!(
+            exe_path_original,
+            exe_path.to_pcwstr().display().to_string()
+        );
         assert_eq!(args_original, args.to_pcwstr().display().to_string());
     }
 }
