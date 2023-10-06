@@ -81,6 +81,11 @@ enum TestType {
         #[arg(long)]
         xml: String,
     },
+    // Raw
+    RawFile {
+        #[arg(long)]
+        xml_path: String,
+    },
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -237,6 +242,7 @@ async fn test(application_id: &String, wait: bool, test_type: TestType) {
             ToastContent::Raw(string)
         }
         TestType::Raw { xml } => ToastContent::Raw(xml),
+        TestType::RawFile { xml_path } => ToastContent::Raw(fs::read_to_string(xml_path).await.unwrap()),
     };
     registerer::register_app_id_fallback(&application_id).unwrap();
     notifier
@@ -250,7 +256,7 @@ async fn test(application_id: &String, wait: bool, test_type: TestType) {
                     "event_number": num,
                     "event": res
                 })
-                .to_string()
+                    .to_string()
             );
         }
     } else {
@@ -315,8 +321,8 @@ async fn register(
                         display_name,
                         icon_path,
                     )
-                    .await
-                    .expect("Cant run elevated");
+                        .await
+                        .expect("Cant run elevated");
                 }
             }
             RegistrationError::ArgumentError(msg) => {
@@ -494,7 +500,7 @@ async fn hide_notification(
                 return Ok(send_worker_request(notifications_pipe, |reply| {
                     WorkerMessage::HideNotificationRequest(id, reply)
                 })
-                .await);
+                    .await);
             }
         }
     }
@@ -510,7 +516,7 @@ async fn hide_all_notification(
     Ok(send_worker_request(notifications_pipe, |reply| {
         WorkerMessage::HideAllNotifications(reply)
     })
-    .await)
+        .await)
 }
 
 async fn get_status(
@@ -545,28 +551,28 @@ async fn get_status(
                             "info": info,
                             "type": "Activated"
                         })
-                        .to_string(),
+                            .to_string(),
                         NotificationStatus::Dismissed(id, reason) => json!({
                             "number": num,
                             "id": id,
                             "dismissReason": reason,
                             "type": "Dismissed"
                         })
-                        .to_string(),
+                            .to_string(),
                         NotificationStatus::DismissedError(id, msg) => json!({
                             "number": num,
                             "id": id,
                             "description": msg,
                             "type": "DismissedError"
                         })
-                        .to_string(),
+                            .to_string(),
                         NotificationStatus::Failed(id, msg) => json!({
                             "number": num,
                             "id": id,
                             "description": msg,
                             "type": "Failed"
                         })
-                        .to_string(),
+                            .to_string(),
                     };
                     if body_tx
                         .send_data(hyper::body::Bytes::from(message + "\n"))
@@ -588,8 +594,8 @@ async fn send_worker_request<TMessage, Factory>(
     worker_pipe: Sender<TMessage>,
     f: Factory,
 ) -> Response<Body>
-where
-    Factory: Fn(Sender<Result<(), String>>) -> TMessage,
+    where
+        Factory: Fn(Sender<Result<(), String>>) -> TMessage,
 {
     let (reply_sender, mut reply_receiver) = mpsc::channel::<Result<(), String>>(1);
     let msg = f(reply_sender);
