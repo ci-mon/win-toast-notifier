@@ -222,7 +222,7 @@ async fn main() {
 async fn test(application_id: &String, wait: bool, test_type: TestType) {
     let (n_sender, mut n_recv) = event_log::<NotificationStatus>(1000);
     tokio::spawn(async move {
-        n_recv.route().await;
+        n_recv.init_transport().await;
     });
     let mut notifier =
         Notifier::new(&application_id, n_sender.clone()).expect("Could not create notifier");
@@ -357,7 +357,7 @@ async fn listen(application_id: Option<String>, api_key: Option<String>, port: u
     let (w_sender, w_receiver) = mpsc::channel::<WorkerMessage>(32);
     let (n_sender, mut n_recv) = event_log::<NotificationStatus>(1000);
     tokio::spawn(async move {
-        n_recv.route().await;
+        n_recv.init_transport().await;
     });
     let notifier =
         Notifier::new(&application_id, n_sender.clone()).expect("Could not create notifier");

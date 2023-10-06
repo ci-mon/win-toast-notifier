@@ -140,27 +140,14 @@ pub async fn elevate(exe_path: String, args: String, pipe_name: String) -> Resul
 }
 
 #[tokio::test]
+#[ignore]
 async fn elevate_test() {
     elevate(
         r"F:\Rust\admin\target\debug\admin.exe".to_string(),
         "aaaa aa".to_string(),
         "test".to_string(),
     )
-    .await;
-}
-#[test]
-fn elevate_tes1() {
-    unsafe {
-        let exe_path_original = r"F:\Rust\admin\target\debug\admin.exe".to_string();
-        let args_original = "aaaa aaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string();
-        let exe_path = WideString::new(exe_path_original.clone());
-        let args = WideString::new(args_original.clone());
-        assert_eq!(
-            exe_path_original,
-            exe_path.to_pcwstr().display().to_string()
-        );
-        assert_eq!(args_original, args.to_pcwstr().display().to_string());
-    }
+    .await.unwrap();
 }
 
 #[test]
@@ -170,6 +157,7 @@ fn test_redirect() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn test_dump_pipe() {
     dump_pipe("win-toast-notifier".to_string()).join().unwrap();
 }

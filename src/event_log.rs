@@ -1,4 +1,5 @@
 use std::sync::{Arc, Mutex};
+use std::thread;
 use std::time::Duration;
 use tokio::sync::mpsc::error::SendError;
 use tokio::time::sleep;
@@ -55,11 +56,27 @@ where
         self._inner_recv.recv().await
     }
 
-    pub async fn drop_async(&mut self) {
-        let id = self._id;
-        let sender = self._inner_send.clone();
-        let entry = EventLogEntry::UnSubscribe(id);
-        if sender.send(entry).await.is_err() {
+    pub async fn drop_async(&self) {
+        self.get_unsubscriber().unsubscribe_async().await
+    }
+    pub fn get_unsubscriber(&self) -> Unsubscriber<TEvent> {
+        Unsubscriber::<TEvent> {
+            _id: self._id,
+            _channel: self._inner_send.clone()
+        }
+    }
+}
+pub struct Unsubscriber<TEvent> {
+    _id: Uuid,
+    _channel: tokio::sync::mpsc::Sender<EventLogEntry<TEvent>>,
+}
+impl<TEvent> Unsubscriber<TEvent>
+    where
+        TEvent: Clone
+{
+    pub async fn unsubscribe_async(&self) {
+        let entry = EventLogEntry::UnSubscribe(self._id);
+        if self._channel.send(entry).await.is_err() {
             eprintln!("Failed to unsubscribe");
         }
     }
@@ -76,7 +93,7 @@ impl<TEvent> Receiver<TEvent>
 where
     TEvent: Clone,
 {
-    pub async fn route(&mut self) {
+    pub async fn init_transport(&mut self) {
         let mut subscribers: Vec<(Uuid, tokio::sync::mpsc::Sender<(usize, TEvent)>)> = Vec::new();
         let mut events_buffer: RingBuffer<TEvent> = RingBuffer::new(self.buffer_len);
         loop {
@@ -144,9 +161,12 @@ where
 async fn main_test() {
     let (s, mut r) = event_log::<String>(10);
     tokio::spawn(async move {
-        r.route().await;
+        r.init_transport().await;
     });
-    s.send("Hello before subs".into()).await.unwrap();
+    let sender = s.clone();
+    thread::spawn( move || {
+        sender.blocking_send("Hello before subs".into()).unwrap();
+    });
     let mut subscription = s.subscribe().await;
     tokio::spawn(async move {
         let mut counter = 3;
@@ -160,14 +180,21 @@ async fn main_test() {
         subscription.drop_async().await;
         println!("Ended")
     });
-    for i in 1..5 {
-        s.send(format!("Hello after {}", i).into()).await.unwrap();
-    }
+    let sender = s.clone();
+    thread::spawn(move || {
+        for i in 1..5 {
+            sender.blocking_send(format!("Hello after {}", i).into()).unwrap();
+        }
+    });
     sleep(Duration::from_secs(1)).await;
     let mut subscription2 = s.subscribe().await;
     sleep(Duration::from_secs(1)).await;
-    while let Ok((id, msg)) = subscription2.try_recv() {
-        println!("SUB2: {} {}", id, msg)
-    }
-    subscription2.drop_async().await;
+    let unsubscriber = subscription2.get_unsubscriber();
+    tokio::spawn(async move {
+        while let Some((id, msg)) = subscription2.recv().await {
+            println!("SUB2: {} {}", id, msg);
+        }
+    });
+    sleep(Duration::from_secs(1)).await;
+    unsubscriber.unsubscribe_async().await;
 }
