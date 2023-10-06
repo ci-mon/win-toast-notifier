@@ -1,8 +1,4 @@
 [![Build status](https://github.com/vadimart92/win-toast-notifier/actions/workflows/rust.yml/badge.svg)](https://github.com/vadimart92/win-toast-notifier/actions/workflows/rust.yml)
-![NPM Downloads](https://img.shields.io/npm/dw/node-win-toast-notifier)
-![NPM version](https://img.shields.io/npm/v/node-win-toast-notifier)
-![NPM License](https://img.shields.io/npm/l/node-win-toast-notifier)
-
 
 # Win toast notifier - easy windows toast notifications
 Toast notification app with HTTP API
