@@ -1,4 +1,4 @@
-[![Build status](https://github.com/vadimart92/win-toast-notifier/actions/workflows/rust.yml/badge.svg)](https://github.com/vadimart92/win-toast-notifier/actions/workflows/rust.yml)
+[![Build status](https://github.com/ci-mon/win-toast-notifier/actions/workflows/rust.yml/badge.svg)](https://github.com/ci-mon/win-toast-notifier/actions/workflows/rust.yml)
 
 # Win toast notifier - easy windows toast notifications
 Toast notification app with HTTP API
@@ -29,7 +29,7 @@ Api-Key: 1
 Content-Type: application/json
 
 {
-    "toast_xml_path": "F:\\Rust\\win-toast-notifier\\toast.xml"
+    "toast_xml_path": "C:\\Rust\\win-toast-notifier\\toast.xml"
 }
 ```
 
